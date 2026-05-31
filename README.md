@@ -113,6 +113,10 @@ It also compares the local `DISCVAULT_IMAGE` image ID before and after pulling,
 and checks whether `next-api` and `next-worker` use that local image ID. Set
 `DISCVAULT_FORCE_RECREATE_ON_PULL=false` to disable that behavior.
 
+For troubleshooting or aggressive test deployments, set
+`DISCVAULT_ALWAYS_RECREATE_STACK=true`. That forces `--force-recreate` on every
+launcher start after pulling.
+
 Manual testing with the current Next channel can republish the beta launcher
 when the development stack image changes. Use this while the Unraid template is
 still installed as `discvault-launcher:beta` but `DISCVAULT_IMAGE` points to
