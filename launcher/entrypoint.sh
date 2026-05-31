@@ -109,6 +109,7 @@ if [ -n "$PACKAGED_STACK_IMAGE" ] || [ -n "$PACKAGED_STACK_DIGEST" ]; then
 fi
 
 STACK_IMAGE_BEFORE="$(image_id "$STACK_IMAGE")"
+log "Managed DiscVault stack image $STACK_IMAGE local image ${STACK_IMAGE_BEFORE:-missing before pull}"
 
 log "Pulling DiscVault stack images"
 if ! docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" pull; then
@@ -116,6 +117,7 @@ if ! docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME"
 fi
 
 STACK_IMAGE_AFTER="$(image_id "$STACK_IMAGE")"
+log "Managed DiscVault stack image $STACK_IMAGE local image ${STACK_IMAGE_AFTER:-missing after pull}"
 UP_ARGS="-d --remove-orphans"
 FORCE_RECREATE_REASON=""
 if [ "$FORCE_RECREATE_ON_PULL" = "true" ] && [ -n "$STACK_IMAGE_BEFORE" ] && [ -n "$STACK_IMAGE_AFTER" ] && [ "$STACK_IMAGE_BEFORE" != "$STACK_IMAGE_AFTER" ]; then
