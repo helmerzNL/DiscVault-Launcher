@@ -1,5 +1,8 @@
 FROM docker:27-cli
 
+ARG DISCVAULT_STACK_IMAGE=ghcr.io/helmerznl/discvault:beta
+ARG DISCVAULT_STACK_DIGEST=unknown
+
 RUN apk add --no-cache ca-certificates curl docker-cli-compose nginx openssl \
     && mkdir -p /run/nginx /var/lib/nginx/tmp/client_body /opt/discvault-launcher
 
@@ -25,7 +28,12 @@ ENV DISCVAULT_LAUNCHER_CONFIG=/config \
     POSTGRES_USER=discvault_next \
     RP_ID=localhost \
     RP_NAME=DiscVault \
-    TZ=Europe/Amsterdam
+    TZ=Europe/Amsterdam \
+    DISCVAULT_LAUNCHER_STACK_IMAGE=${DISCVAULT_STACK_IMAGE} \
+    DISCVAULT_LAUNCHER_STACK_DIGEST=${DISCVAULT_STACK_DIGEST}
+
+LABEL eu.discvault.stack.image="${DISCVAULT_STACK_IMAGE}" \
+      eu.discvault.stack.digest="${DISCVAULT_STACK_DIGEST}"
 
 VOLUME ["/config"]
 EXPOSE 80

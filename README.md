@@ -89,12 +89,34 @@ reports that legacy migration is required.
 
 ## Update Model
 
-1. Community Apps updates the launcher image.
-2. The launcher starts and pulls `DISCVAULT_IMAGE`.
-3. The launcher runs `docker compose up -d --remove-orphans` for project
+Unraid can only check the container image that Community Apps installed. It
+cannot see updates for the child Compose containers that the launcher manages.
+For that reason the launcher repository contains `Stack Image Update Watch`.
+That workflow checks the `DISCVAULT_IMAGE` channel digest and republishes the
+launcher tag when the stack image changes.
+
+1. `Stack Image Update Watch` sees a new `helmerznl/discvault` digest and
+   republishes `helmerznl/discvault-launcher:beta`.
+2. Unraid detects the launcher image update.
+3. Community Apps or the Auto Update plugin updates the launcher container.
+4. The launcher starts and pulls `DISCVAULT_IMAGE`.
+5. The launcher runs `docker compose up -d --remove-orphans` for project
    `discvault_stack`.
-4. `next-api` applies PostgreSQL migrations before serving traffic.
-5. The existing beta data stays in place and is imported by the migration UI.
+6. `next-api` applies PostgreSQL migrations before serving traffic.
+7. The existing beta data stays in place and is imported by the migration UI.
+
+Manual testing with the current Next channel can republish the beta launcher
+when the development stack image changes. Use this while the Unraid template is
+still installed as `discvault-launcher:beta` but `DISCVAULT_IMAGE` points to
+`ghcr.io/helmerznl/discvault:dev`:
+
+```bash
+gh workflow run "Stack Image Update Watch" \
+  -f stack_image=ghcr.io/helmerznl/discvault:dev \
+  -f launcher_tag=beta \
+  -f state_variable=DISCVAULT_STACK_DIGEST_BETA_DEV \
+  -f force=true
+```
 
 ## Manual Stack Removal
 

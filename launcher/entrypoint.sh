@@ -34,6 +34,8 @@ COMPOSE_FILE="$CONFIG_DIR/docker-compose.yml"
 PROJECT_NAME="${DISCVAULT_PROJECT_NAME:-discvault_stack}"
 NETWORK_NAME="${DISCVAULT_NETWORK:-discvault-stack}"
 RP_ORIGINS_VALUE="${RP_ORIGINS:-${RP_ORIGIN:-http://localhost:${DISCVAULT_WEB_PORT:-6080}}}"
+PACKAGED_STACK_IMAGE="${DISCVAULT_LAUNCHER_STACK_IMAGE:-}"
+PACKAGED_STACK_DIGEST="${DISCVAULT_LAUNCHER_STACK_DIGEST:-}"
 
 mkdir -p "$CONFIG_DIR"
 touch "$ENV_FILE"
@@ -71,6 +73,10 @@ cp /opt/discvault-launcher/docker-compose.yml "$COMPOSE_FILE"
 log "Ensuring Docker network $NETWORK_NAME exists"
 docker network create "$NETWORK_NAME" >/dev/null 2>&1 || true
 docker network connect "$NETWORK_NAME" "$(hostname)" >/dev/null 2>&1 || true
+
+if [ -n "$PACKAGED_STACK_IMAGE" ] || [ -n "$PACKAGED_STACK_DIGEST" ]; then
+  log "Launcher packaged stack image ${PACKAGED_STACK_IMAGE:-unknown} digest ${PACKAGED_STACK_DIGEST:-unknown}"
+fi
 
 log "Pulling DiscVault stack images"
 if ! docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" pull; then

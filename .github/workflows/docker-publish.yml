@@ -15,6 +15,7 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: helmerznl/discvault-launcher
+  DISCVAULT_STACK_IMAGE: ghcr.io/helmerznl/discvault:beta
 
 jobs:
   build-and-push:
@@ -37,6 +38,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve default stack digest
+        id: stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(docker buildx imagetools inspect "$DISCVAULT_STACK_IMAGE" --format '{{.Manifest.Digest}}' 2>/dev/null || true)"
+          if [[ -z "$digest" || "$digest" == "<nil>" ]]; then
+            digest="unknown"
+          fi
+          echo "image=$DISCVAULT_STACK_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v6
@@ -54,6 +67,8 @@ jobs:
             org.opencontainers.image.description=Unraid Community Apps launcher for the DiscVault Docker stack.
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            eu.discvault.stack.image=${{ steps.stack.outputs.image }}
+            eu.discvault.stack.digest=${{ steps.stack.outputs.digest }}
 
       - name: Build and push
         uses: docker/build-push-action@v7
@@ -63,6 +78,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            DISCVAULT_STACK_IMAGE=${{ steps.stack.outputs.image }}
+            DISCVAULT_STACK_DIGEST=${{ steps.stack.outputs.digest }}
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
