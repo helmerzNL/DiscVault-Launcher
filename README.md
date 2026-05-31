@@ -105,11 +105,12 @@ launcher tag when the stack image changes.
 6. `next-api` applies PostgreSQL migrations before serving traffic.
 7. The existing beta data stays in place and is imported by the migration UI.
 
-By default the launcher compares the local `DISCVAULT_IMAGE` image ID before
-and after pulling. It also checks whether the running `next-api` and
-`next-worker` containers use that local image ID. When either check detects a
-stale stack, it adds `--force-recreate` so the managed services definitely
-restart on the freshly pulled image. Set
+By default the launcher stores the packaged stack digest in
+`/config/last-stack-digest` after a successful start. When a newer launcher
+image represents a different stack digest, it adds `--force-recreate` after
+pulling so the managed services definitely restart on the freshly pulled image.
+It also compares the local `DISCVAULT_IMAGE` image ID before and after pulling,
+and checks whether `next-api` and `next-worker` use that local image ID. Set
 `DISCVAULT_FORCE_RECREATE_ON_PULL=false` to disable that behavior.
 
 Manual testing with the current Next channel can republish the beta launcher

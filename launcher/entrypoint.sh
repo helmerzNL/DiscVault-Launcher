@@ -59,6 +59,7 @@ ensure_env() {
 CONFIG_DIR="${DISCVAULT_LAUNCHER_CONFIG:-/config}"
 ENV_FILE="$CONFIG_DIR/stack.env"
 COMPOSE_FILE="$CONFIG_DIR/docker-compose.yml"
+LAST_STACK_DIGEST_FILE="$CONFIG_DIR/last-stack-digest"
 PROJECT_NAME="${DISCVAULT_PROJECT_NAME:-discvault_stack}"
 NETWORK_NAME="${DISCVAULT_NETWORK:-discvault-stack}"
 RP_ORIGINS_VALUE="${RP_ORIGINS:-${RP_ORIGIN:-http://localhost:${DISCVAULT_WEB_PORT:-6080}}}"
@@ -120,7 +121,10 @@ STACK_IMAGE_AFTER="$(image_id "$STACK_IMAGE")"
 log "Managed DiscVault stack image $STACK_IMAGE local image ${STACK_IMAGE_AFTER:-missing after pull}"
 UP_ARGS="-d --remove-orphans"
 FORCE_RECREATE_REASON=""
-if [ "$FORCE_RECREATE_ON_PULL" = "true" ] && [ -n "$STACK_IMAGE_BEFORE" ] && [ -n "$STACK_IMAGE_AFTER" ] && [ "$STACK_IMAGE_BEFORE" != "$STACK_IMAGE_AFTER" ]; then
+LAST_STACK_DIGEST="$(cat "$LAST_STACK_DIGEST_FILE" 2>/dev/null || true)"
+if [ "$FORCE_RECREATE_ON_PULL" = "true" ] && [ -n "$PACKAGED_STACK_DIGEST" ] && [ "$PACKAGED_STACK_DIGEST" != "unknown" ] && [ "$PACKAGED_STACK_DIGEST" != "$LAST_STACK_DIGEST" ]; then
+  FORCE_RECREATE_REASON="Packaged DiscVault stack digest changed from ${LAST_STACK_DIGEST:-none} to $PACKAGED_STACK_DIGEST"
+elif [ "$FORCE_RECREATE_ON_PULL" = "true" ] && [ -n "$STACK_IMAGE_BEFORE" ] && [ -n "$STACK_IMAGE_AFTER" ] && [ "$STACK_IMAGE_BEFORE" != "$STACK_IMAGE_AFTER" ]; then
   FORCE_RECREATE_REASON="DiscVault image changed from $STACK_IMAGE_BEFORE to $STACK_IMAGE_AFTER"
 elif [ "$FORCE_RECREATE_ON_PULL" = "true" ] && [ -n "$STACK_IMAGE_AFTER" ]; then
   if ! service_uses_image next-api "$STACK_IMAGE_AFTER" || ! service_uses_image next-worker "$STACK_IMAGE_AFTER"; then
@@ -135,6 +139,9 @@ fi
 
 log "Starting or updating DiscVault stack project $PROJECT_NAME"
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up $UP_ARGS
+if [ -n "$PACKAGED_STACK_DIGEST" ] && [ "$PACKAGED_STACK_DIGEST" != "unknown" ]; then
+  printf '%s\n' "$PACKAGED_STACK_DIGEST" > "$LAST_STACK_DIGEST_FILE"
+fi
 
 log "DiscVault launcher is ready"
 exec nginx -g "daemon off;"
