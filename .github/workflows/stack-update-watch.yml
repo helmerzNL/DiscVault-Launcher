@@ -13,10 +13,6 @@ on:
         description: Launcher tag to publish when the stack image changes.
         required: false
         default: beta
-      state_variable:
-        description: Repository variable used to store the last stack digest.
-        required: false
-        default: DISCVAULT_STACK_DIGEST_BETA
       force:
         description: Build even when the stack digest has not changed.
         required: false
@@ -37,7 +33,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      actions: write
 
     steps:
       - name: Checkout
@@ -72,24 +67,25 @@ jobs:
       - name: Decide whether to publish
         id: plan
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           launcher_tag="${{ github.event.inputs.launcher_tag || 'beta' }}"
-          state_variable="${{ github.event.inputs.state_variable || 'DISCVAULT_STACK_DIGEST_BETA' }}"
           force="${{ github.event.inputs.force || 'false' }}"
           current="${{ steps.digest.outputs.stack_digest }}"
-          previous="$(gh variable get "$state_variable" --repo "$GITHUB_REPOSITORY" 2>/dev/null || true)"
+          digest_tag="${REGISTRY}/${IMAGE_NAME}:${launcher_tag}-stack-${{ steps.digest.outputs.stack_digest_short }}"
+          existing_digest_tag=false
+          if docker buildx imagetools inspect "$digest_tag" >/dev/null 2>&1; then
+            existing_digest_tag=true
+          fi
 
           should_publish=false
-          if [[ "$force" == "true" || "$current" != "$previous" ]]; then
+          if [[ "$force" == "true" || "$existing_digest_tag" != "true" ]]; then
             should_publish=true
           fi
 
           echo "launcher_tag=$launcher_tag" >> "$GITHUB_OUTPUT"
-          echo "state_variable=$state_variable" >> "$GITHUB_OUTPUT"
-          echo "previous_digest=$previous" >> "$GITHUB_OUTPUT"
+          echo "digest_tag=$digest_tag" >> "$GITHUB_OUTPUT"
+          echo "existing_digest_tag=$existing_digest_tag" >> "$GITHUB_OUTPUT"
           echo "should_publish=$should_publish" >> "$GITHUB_OUTPUT"
 
           {
@@ -97,8 +93,9 @@ jobs:
             echo ""
             echo "- Stack image: \`${{ steps.digest.outputs.stack_image }}\`"
             echo "- Current digest: \`$current\`"
-            echo "- Previous digest: \`${previous:-none}\`"
             echo "- Launcher tag: \`$launcher_tag\`"
+            echo "- Digest tag: \`$digest_tag\`"
+            echo "- Existing digest tag: \`$existing_digest_tag\`"
             echo "- Publish: \`$should_publish\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -125,14 +122,3 @@ jobs:
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Store published stack digest
-        if: steps.plan.outputs.should_publish == 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          gh variable set "${{ steps.plan.outputs.state_variable }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --body "${{ steps.digest.outputs.stack_digest }}"

@@ -114,7 +114,6 @@ still installed as `discvault-launcher:beta` but `DISCVAULT_IMAGE` points to
 gh workflow run "Stack Image Update Watch" \
   -f stack_image=ghcr.io/helmerznl/discvault:dev \
   -f launcher_tag=beta \
-  -f state_variable=DISCVAULT_STACK_DIGEST_BETA_DEV \
   -f force=true
 ```
 
