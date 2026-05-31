@@ -13,6 +13,30 @@ image_id() {
   docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true
 }
 
+service_container_ids() {
+  docker ps -aq \
+    --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+    --filter "label=com.docker.compose.service=$1"
+}
+
+service_uses_image() {
+  service="$1"
+  expected_image_id="$2"
+  ids="$(service_container_ids "$service")"
+  if [ -z "$ids" ]; then
+    return 0
+  fi
+
+  for id in $ids; do
+    current_image_id="$(docker inspect "$id" --format '{{.Image}}' 2>/dev/null || true)"
+    if [ -n "$current_image_id" ] && [ "$current_image_id" != "$expected_image_id" ]; then
+      return 1
+    fi
+  done
+
+  return 0
+}
+
 set_env() {
   key="$1"
   value="$2"
@@ -93,8 +117,17 @@ fi
 
 STACK_IMAGE_AFTER="$(image_id "$STACK_IMAGE")"
 UP_ARGS="-d --remove-orphans"
+FORCE_RECREATE_REASON=""
 if [ "$FORCE_RECREATE_ON_PULL" = "true" ] && [ -n "$STACK_IMAGE_BEFORE" ] && [ -n "$STACK_IMAGE_AFTER" ] && [ "$STACK_IMAGE_BEFORE" != "$STACK_IMAGE_AFTER" ]; then
-  log "DiscVault image changed from $STACK_IMAGE_BEFORE to $STACK_IMAGE_AFTER; forcing stack recreate"
+  FORCE_RECREATE_REASON="DiscVault image changed from $STACK_IMAGE_BEFORE to $STACK_IMAGE_AFTER"
+elif [ "$FORCE_RECREATE_ON_PULL" = "true" ] && [ -n "$STACK_IMAGE_AFTER" ]; then
+  if ! service_uses_image next-api "$STACK_IMAGE_AFTER" || ! service_uses_image next-worker "$STACK_IMAGE_AFTER"; then
+    FORCE_RECREATE_REASON="Running DiscVault containers are not using local $STACK_IMAGE image $STACK_IMAGE_AFTER"
+  fi
+fi
+
+if [ -n "$FORCE_RECREATE_REASON" ]; then
+  log "$FORCE_RECREATE_REASON; forcing stack recreate"
   UP_ARGS="-d --remove-orphans --force-recreate"
 fi
 
