@@ -1,0 +1,7 @@
+.git
+.github
+config
+data
+postgres
+*.md
+unraid

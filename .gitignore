@@ -1,0 +1,7 @@
+.env
+*.env
+config/
+data/
+postgres/
+.DS_Store
+Thumbs.db

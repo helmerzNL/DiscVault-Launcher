@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>DiscVault</Name>
+  <Repository>ghcr.io/helmerznl/discvault-launcher:beta</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://forums.unraid.net/topic/198808-support-discvault-physical-disc-collection-manager/</Support>
+  <Project>https://github.com/helmerzNL/DiscVault-Launcher</Project>
+  <Overview>DiscVault launcher for Unraid Community Apps. It updates and manages the PostgreSQL-backed DiscVault stack while reusing the existing DiscVault beta appdata directory for migration.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:80]</WebUI>
+  <Icon>https://raw.githubusercontent.com/helmerzNL/DiscVault/main/app/frontend/favicon-192.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+
+  <Config Name="Web UI Port" Target="80" Default="6080" Mode="tcp" Description="DiscVault web interface. The launcher proxies this port to the DiscVault Next API/UI." Type="Port" Display="always" Required="true" Mask="false">6080</Config>
+
+  <Config Name="Data Path" Target="/data" Default="/mnt/user/appdata/discvault" Mode="rw" Description="Existing DiscVault beta appdata path. Kept for compatibility with the current beta container template." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/discvault</Config>
+  <Config Name="Launcher Config Path" Target="/config" Default="/mnt/user/appdata/discvault-launcher" Mode="rw" Description="Launcher state, generated Compose file, and generated secrets." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/discvault-launcher</Config>
+  <Config Name="Docker Socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw" Description="Required so the launcher can create and update the DiscVault stack containers." Type="Path" Display="advanced" Required="true" Mask="false">/var/run/docker.sock</Config>
+
+  <Config Name="Existing DiscVault Host Data Path" Target="DISCVAULT_DATA_DIR_HOST" Default="/mnt/user/appdata/discvault" Mode="" Description="Host path of the existing DiscVault beta appdata. Must match Data Path so the managed stack can mount the same data from the Docker host." Type="Variable" Display="advanced" Required="true" Mask="false">/mnt/user/appdata/discvault</Config>
+  <Config Name="PostgreSQL Data Path" Target="DISCVAULT_POSTGRES_DATA_DIR_HOST" Default="/mnt/user/appdata/discvault-postgres" Mode="" Description="Host path where the launcher stores PostgreSQL data for DiscVault Next." Type="Variable" Display="always" Required="true" Mask="false">/mnt/user/appdata/discvault-postgres</Config>
+  <Config Name="DiscVault Image" Target="DISCVAULT_IMAGE" Default="ghcr.io/helmerznl/discvault:beta" Mode="" Description="DiscVault application image used by next-api and next-worker." Type="Variable" Display="advanced" Required="true" Mask="false">ghcr.io/helmerznl/discvault:beta</Config>
+  <Config Name="Compose Project Name" Target="DISCVAULT_PROJECT_NAME" Default="discvault_stack" Mode="" Description="Stable Docker Compose project name for the managed stack." Type="Variable" Display="advanced" Required="true" Mask="false">discvault_stack</Config>
+  <Config Name="Stack Network" Target="DISCVAULT_NETWORK" Default="discvault-stack" Mode="" Description="Shared Docker network for launcher, API, worker, and PostgreSQL." Type="Variable" Display="advanced" Required="true" Mask="false">discvault-stack</Config>
+
+  <Config Name="Timezone" Target="TZ" Default="Europe/Amsterdam" Mode="" Description="Container and stack timezone." Type="Variable" Display="always" Required="true" Mask="false">Europe/Amsterdam</Config>
+  <Config Name="RP_ID" Target="RP_ID" Default="localhost" Mode="" Description="WebAuthn relying party ID (domain only, no protocol/port)." Type="Variable" Display="advanced" Required="false" Mask="false">localhost</Config>
+  <Config Name="RP_ORIGINS" Target="RP_ORIGINS" Default="http://localhost:6080" Mode="" Description="Comma-separated WebAuthn allowed origins. Use your real DiscVault URL when using a reverse proxy." Type="Variable" Display="advanced" Required="false" Mask="false">http://localhost:6080</Config>
+  <Config Name="PostgreSQL Password" Target="POSTGRES_PASSWORD" Default="" Mode="" Description="Optional stable PostgreSQL password. Leave empty and the launcher generates one in /config/stack.env on first start." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="JWT Secret" Target="JWT_SECRET" Default="" Mode="" Description="Optional stable JWT signing secret. Leave empty and the launcher generates one in /config/stack.env on first start." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+</Container>
