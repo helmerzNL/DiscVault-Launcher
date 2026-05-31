@@ -9,6 +9,10 @@ random_secret() {
   openssl rand -hex 32
 }
 
+image_id() {
+  docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true
+}
+
 set_env() {
   key="$1"
   value="$2"
@@ -36,12 +40,14 @@ NETWORK_NAME="${DISCVAULT_NETWORK:-discvault-stack}"
 RP_ORIGINS_VALUE="${RP_ORIGINS:-${RP_ORIGIN:-http://localhost:${DISCVAULT_WEB_PORT:-6080}}}"
 PACKAGED_STACK_IMAGE="${DISCVAULT_LAUNCHER_STACK_IMAGE:-}"
 PACKAGED_STACK_DIGEST="${DISCVAULT_LAUNCHER_STACK_DIGEST:-}"
+STACK_IMAGE="${DISCVAULT_IMAGE:-ghcr.io/helmerznl/discvault:beta}"
+FORCE_RECREATE_ON_PULL="${DISCVAULT_FORCE_RECREATE_ON_PULL:-true}"
 
 mkdir -p "$CONFIG_DIR"
 touch "$ENV_FILE"
 
 set_env TZ "${TZ:-Europe/Amsterdam}" "$ENV_FILE"
-set_env DISCVAULT_IMAGE "${DISCVAULT_IMAGE:-ghcr.io/helmerznl/discvault:beta}" "$ENV_FILE"
+set_env DISCVAULT_IMAGE "$STACK_IMAGE" "$ENV_FILE"
 set_env DISCVAULT_DATA_DIR_HOST "${DISCVAULT_DATA_DIR_HOST:-/mnt/user/appdata/discvault}" "$ENV_FILE"
 set_env DISCVAULT_POSTGRES_DATA_DIR_HOST "${DISCVAULT_POSTGRES_DATA_DIR_HOST:-/mnt/user/appdata/discvault-postgres}" "$ENV_FILE"
 set_env DISCVAULT_NETWORK "$NETWORK_NAME" "$ENV_FILE"
@@ -78,13 +84,22 @@ if [ -n "$PACKAGED_STACK_IMAGE" ] || [ -n "$PACKAGED_STACK_DIGEST" ]; then
   log "Launcher packaged stack image ${PACKAGED_STACK_IMAGE:-unknown} digest ${PACKAGED_STACK_DIGEST:-unknown}"
 fi
 
+STACK_IMAGE_BEFORE="$(image_id "$STACK_IMAGE")"
+
 log "Pulling DiscVault stack images"
 if ! docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" pull; then
   log "Image pull failed; continuing with locally available images"
 fi
 
+STACK_IMAGE_AFTER="$(image_id "$STACK_IMAGE")"
+UP_ARGS="-d --remove-orphans"
+if [ "$FORCE_RECREATE_ON_PULL" = "true" ] && [ -n "$STACK_IMAGE_BEFORE" ] && [ -n "$STACK_IMAGE_AFTER" ] && [ "$STACK_IMAGE_BEFORE" != "$STACK_IMAGE_AFTER" ]; then
+  log "DiscVault image changed from $STACK_IMAGE_BEFORE to $STACK_IMAGE_AFTER; forcing stack recreate"
+  UP_ARGS="-d --remove-orphans --force-recreate"
+fi
+
 log "Starting or updating DiscVault stack project $PROJECT_NAME"
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up -d --remove-orphans
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up $UP_ARGS
 
 log "DiscVault launcher is ready"
 exec nginx -g "daemon off;"

@@ -105,6 +105,11 @@ launcher tag when the stack image changes.
 6. `next-api` applies PostgreSQL migrations before serving traffic.
 7. The existing beta data stays in place and is imported by the migration UI.
 
+By default the launcher also compares the local `DISCVAULT_IMAGE` image ID
+before and after pulling. When the image changed, it adds `--force-recreate` so
+the managed stack definitely restarts on the freshly pulled image. Set
+`DISCVAULT_FORCE_RECREATE_ON_PULL=false` to disable that behavior.
+
 Manual testing with the current Next channel can republish the beta launcher
 when the development stack image changes. Use this while the Unraid template is
 still installed as `discvault-launcher:beta` but `DISCVAULT_IMAGE` points to

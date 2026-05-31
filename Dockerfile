@@ -24,6 +24,7 @@ ENV DISCVAULT_LAUNCHER_CONFIG=/config \
     DISCVAULT_WORKER_ID=next-worker-1 \
     DISCVAULT_WORKER_POLL_INTERVAL=2 \
     DISCVAULT_NEXT_ENABLE_TEST_RESET=false \
+    DISCVAULT_FORCE_RECREATE_ON_PULL=true \
     POSTGRES_DB=discvault_next \
     POSTGRES_USER=discvault_next \
     RP_ID=localhost \
