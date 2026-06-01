@@ -3,6 +3,7 @@ name: Stack Image Update Watch
 on:
   schedule:
     - cron: "17 */4 * * *"
+    - cron: "47 */4 * * *"
   workflow_dispatch:
     inputs:
       stack_image:
@@ -20,7 +21,7 @@ on:
         default: false
 
 concurrency:
-  group: stack-update-watch-${{ github.event.inputs.launcher_tag || 'beta' }}
+  group: stack-update-watch-${{ github.event.inputs.launcher_tag || github.event.schedule || 'beta' }}
   cancel-in-progress: false
 
 env:
@@ -48,12 +49,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Select watch target
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            if [[ "${{ github.event.schedule }}" == "47 */4 * * *" ]]; then
+              echo "stack_image=ghcr.io/helmerznl/discvault:dev" >> "$GITHUB_OUTPUT"
+              echo "launcher_tag=dev" >> "$GITHUB_OUTPUT"
+            else
+              echo "stack_image=ghcr.io/helmerznl/discvault:beta" >> "$GITHUB_OUTPUT"
+              echo "launcher_tag=beta" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "stack_image=${{ github.event.inputs.stack_image || 'ghcr.io/helmerznl/discvault:beta' }}" >> "$GITHUB_OUTPUT"
+            echo "launcher_tag=${{ github.event.inputs.launcher_tag || 'beta' }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Resolve stack digest
         id: digest
         shell: bash
         run: |
           set -euo pipefail
-          stack_image="${{ github.event.inputs.stack_image || 'ghcr.io/helmerznl/discvault:beta' }}"
+          stack_image="${{ steps.target.outputs.stack_image }}"
           digest="$(docker buildx imagetools inspect "$stack_image" --format '{{.Manifest.Digest}}')"
           if [[ -z "$digest" || "$digest" == "<nil>" ]]; then
             echo "Could not resolve manifest digest for $stack_image" >&2
@@ -69,7 +88,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          launcher_tag="${{ github.event.inputs.launcher_tag || 'beta' }}"
+          launcher_tag="${{ steps.target.outputs.launcher_tag }}"
           force="${{ github.event.inputs.force || 'false' }}"
           current="${{ steps.digest.outputs.stack_digest }}"
           digest_tag="${REGISTRY}/${IMAGE_NAME}:${launcher_tag}-stack-${{ steps.digest.outputs.stack_digest_short }}"

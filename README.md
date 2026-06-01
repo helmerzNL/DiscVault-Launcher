@@ -129,6 +129,16 @@ gh workflow run "Stack Image Update Watch" \
   -f force=true
 ```
 
+For predictable development updates, use matching development tags in Unraid:
+
+```text
+Repository:      ghcr.io/helmerznl/discvault-launcher:dev
+DISCVAULT_IMAGE: ghcr.io/helmerznl/discvault:dev
+```
+
+The scheduled watcher publishes `discvault-launcher:beta` for
+`discvault:beta` and `discvault-launcher:dev` for `discvault:dev`.
+
 ## Manual Stack Removal
 
 Removing the launcher container does not delete the managed stack. That protects
