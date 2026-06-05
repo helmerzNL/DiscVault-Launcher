@@ -2,13 +2,14 @@ name: Stack Image Update Watch
 
 on:
   schedule:
+    - cron: "7 */4 * * *"
     - cron: "17 */4 * * *"
     - cron: "47 */4 * * *"
     - cron: "27 */4 * * *"
   workflow_dispatch:
     inputs:
       stack_image:
-        description: DiscVault stack image to watch.
+        description: DiscVault app image to watch.
         required: false
         default: ghcr.io/helmerznl/discvault:v26-beta
       launcher_tag:
@@ -56,7 +57,10 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            if [[ "${{ github.event.schedule }}" == "47 */4 * * *" ]]; then
+            if [[ "${{ github.event.schedule }}" == "7 */4 * * *" ]]; then
+              echo "stack_image=ghcr.io/helmerznl/discvault:latest" >> "$GITHUB_OUTPUT"
+              echo "launcher_tag=latest" >> "$GITHUB_OUTPUT"
+            elif [[ "${{ github.event.schedule }}" == "47 */4 * * *" ]]; then
               echo "stack_image=ghcr.io/helmerznl/discvault:dev" >> "$GITHUB_OUTPUT"
               echo "launcher_tag=dev" >> "$GITHUB_OUTPUT"
             elif [[ "${{ github.event.schedule }}" == "27 */4 * * *" ]]; then
@@ -110,6 +114,15 @@ jobs:
           echo "digest_tag=$digest_tag" >> "$GITHUB_OUTPUT"
           echo "existing_digest_tag=$existing_digest_tag" >> "$GITHUB_OUTPUT"
           echo "should_publish=$should_publish" >> "$GITHUB_OUTPUT"
+          {
+            echo "launcher_tags<<EOF"
+            echo "${REGISTRY}/${IMAGE_NAME}:${launcher_tag}"
+            echo "$digest_tag"
+            if [[ "$launcher_tag" == "latest" ]]; then
+              echo "${REGISTRY}/${IMAGE_NAME}:legacy"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
           {
             echo "### Stack update watch"
@@ -129,9 +142,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.plan.outputs.launcher_tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.plan.outputs.launcher_tag }}-stack-${{ steps.digest.outputs.stack_digest_short }}
+          tags: ${{ steps.plan.outputs.launcher_tags }}
           labels: |
             org.opencontainers.image.title=DiscVault Launcher
             org.opencontainers.image.description=Unraid Community Apps launcher for the DiscVault Docker stack.

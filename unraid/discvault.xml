@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>DiscVault</Name>
-  <Repository>ghcr.io/helmerznl/discvault-launcher:beta</Repository>
+  <Repository>ghcr.io/helmerznl/discvault-launcher:v26-beta</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <MyIP/>
@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://forums.unraid.net/topic/198808-support-discvault-physical-disc-collection-manager/</Support>
   <Project>https://github.com/helmerzNL/DiscVault-Launcher</Project>
-  <Overview>DiscVault launcher for Unraid Community Apps. It updates and manages the PostgreSQL-backed DiscVault stack while reusing the existing DiscVault beta appdata directory for migration.</Overview>
+  <Overview>DiscVault launcher for Unraid Community Apps. The latest/legacy launcher channel starts the legacy single-container app; v26 channels update and manage the PostgreSQL-backed DiscVault 26 stack while reusing the existing DiscVault beta appdata directory for migration.</Overview>
   <Category>Tools:</Category>
   <WebUI>http://[IP]:[PORT:80]</WebUI>
   <Icon>https://raw.githubusercontent.com/helmerzNL/DiscVault/main/app/frontend/favicon-192.png</Icon>
@@ -29,7 +29,7 @@
 
   <Config Name="Existing DiscVault Host Data Path" Target="DISCVAULT_DATA_DIR_HOST" Default="/mnt/user/appdata/discvault" Mode="" Description="Host path of the existing DiscVault beta appdata. Must match Data Path so the managed stack can mount the same data from the Docker host." Type="Variable" Display="advanced" Required="true" Mask="false">/mnt/user/appdata/discvault</Config>
   <Config Name="PostgreSQL Data Path" Target="DISCVAULT_POSTGRES_DATA_DIR_HOST" Default="/mnt/user/appdata/discvault-postgres" Mode="" Description="Host path where the launcher stores PostgreSQL data for DiscVault Next." Type="Variable" Display="always" Required="true" Mask="false">/mnt/user/appdata/discvault-postgres</Config>
-  <Config Name="DiscVault Image" Target="DISCVAULT_IMAGE" Default="auto" Mode="" Description="DiscVault application image used by next-api and next-worker. Use auto to follow the launcher channel, for example launcher:dev starts discvault:dev." Type="Variable" Display="advanced" Required="false" Mask="false">auto</Config>
+  <Config Name="DiscVault Image" Target="DISCVAULT_IMAGE" Default="auto" Mode="" Description="DiscVault application image. Use auto to follow the launcher channel: launcher:latest starts discvault:latest as one legacy container, launcher:dev starts discvault:dev as the v26 stack." Type="Variable" Display="advanced" Required="false" Mask="false">auto</Config>
   <Config Name="Compose Project Name" Target="DISCVAULT_PROJECT_NAME" Default="discvault_stack" Mode="" Description="Stable Docker Compose project name for the managed stack." Type="Variable" Display="advanced" Required="true" Mask="false">discvault_stack</Config>
   <Config Name="Stack Network" Target="DISCVAULT_NETWORK" Default="discvault-stack" Mode="" Description="Shared Docker network for launcher, API, worker, and PostgreSQL." Type="Variable" Display="advanced" Required="true" Mask="false">discvault-stack</Config>
   <Config Name="Always Recreate Stack" Target="DISCVAULT_ALWAYS_RECREATE_STACK" Default="false" Mode="" Description="When true, the launcher recreates the managed DiscVault stack on every start after pulling images. Useful for development and troubleshooting." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>

@@ -1,8 +1,10 @@
 # DiscVault Launcher
 
-DiscVault Launcher is a small deployment manager for the PostgreSQL-backed
-DiscVault stack. It is intentionally separate from the DiscVault application
-image and from the standalone Docker Compose stack.
+DiscVault Launcher is a small deployment manager for DiscVault Docker channels.
+It can run the legacy single-container app for `latest`/`legacy`, or the
+PostgreSQL-backed DiscVault 26 stack for v26 channels. It is intentionally
+separate from the DiscVault application image and from the standalone Docker
+Compose stack.
 
 The split is deliberate:
 
@@ -18,15 +20,16 @@ The split is deliberate:
 Unraid Community Apps
   -> DiscVault Launcher container
     -> Docker socket
-      -> postgres
-      -> next-api
-      -> next-worker
+      -> legacy latest: discvault
+      -> v26 stack: postgres + next-api + next-worker
     -> Nginx proxy on the Unraid WebUI port
 ```
 
 The launcher keeps running as the public web endpoint and proxies requests to
-`next-api:5000`. The managed stack does not bind its own host ports in launcher
-mode, so an existing Unraid WebUI port such as `6080` stays stable.
+the managed DiscVault container. Legacy mode proxies to the all-in-one
+container on port `80`; v26 stack mode proxies to `next-api:5000`. The managed
+containers do not bind their own host ports in launcher mode, so an existing
+Unraid WebUI port such as `6080` stays stable.
 
 ## Standalone Docker Compose
 
@@ -64,7 +67,7 @@ docker run -d \
   -e DISCVAULT_POSTGRES_DATA_DIR_HOST=/mnt/user/appdata/discvault-postgres \
   -e RP_ID=localhost \
   -e RP_ORIGINS=http://localhost:6080 \
-  ghcr.io/helmerznl/discvault-launcher:beta
+  ghcr.io/helmerznl/discvault-launcher:v26-beta
 ```
 
 The first start writes generated secrets to `/config/stack.env`. Keep that file
@@ -100,10 +103,13 @@ launcher tag when the stack image changes.
 2. Unraid detects the launcher image update.
 3. Community Apps or the Auto Update plugin updates the launcher container.
 4. The launcher starts and pulls only the resolved DiscVault app image.
-5. The launcher runs `docker compose up -d --remove-orphans` for project
-   `discvault_stack`.
-6. `next-api` applies PostgreSQL migrations before serving traffic.
-7. The existing beta data stays in place and is imported by the migration UI.
+5. For `latest`/`legacy`, the launcher starts only the legacy DiscVault
+   all-in-one container.
+6. For `dev`, `v26-beta`, `v26`, and immutable `v26.x.y` tags, the launcher
+   runs the PostgreSQL-backed v26 stack.
+7. In v26 mode, `next-api` applies PostgreSQL migrations before serving
+   traffic.
+8. The existing beta data stays in place and is imported by the migration UI.
 
 By default the launcher stores the packaged stack digest in
 `/config/last-stack-digest` after a successful start. When a newer launcher
@@ -137,20 +143,25 @@ Repository:      ghcr.io/helmerznl/discvault-launcher:dev
 DISCVAULT_IMAGE: auto
 ```
 
-The scheduled watcher publishes `discvault-launcher:dev` for `discvault:dev`,
+The scheduled watcher publishes `discvault-launcher:latest` for
+`discvault:latest`, `discvault-launcher:dev` for `discvault:dev`,
 `discvault-launcher:v26-beta` for `discvault:v26-beta`, and
 `discvault-launcher:v26` for `discvault:v26`. Immutable release tags such as
-`v26.0.0` can publish matching launcher and stack images. With
-`DISCVAULT_IMAGE=auto`, the launcher starts the stack image baked into its own
-channel. Set `DISCVAULT_IMAGE` to a full image reference only when you want to
-override that channel intentionally.
+`v26.0.0` can publish matching launcher and app images. With
+`DISCVAULT_IMAGE=auto`, the launcher starts the DiscVault app image baked into
+its own channel. Set `DISCVAULT_IMAGE` to a full image reference only when you
+want to override that channel intentionally.
 
-`ghcr.io/helmerznl/discvault:latest` is the legacy single-container app and is
-not managed by the launcher stack.
+`ghcr.io/helmerznl/discvault:latest` is the legacy single-container app. When
+the launcher resolves to `discvault:latest` or `discvault:legacy`, it starts
+only that one container and does not pull or start PostgreSQL, `next-api`, or
+`next-worker`.
 
 Channel mapping:
 
 ```text
+discvault-launcher:latest    -> discvault:latest    (legacy single container)
+discvault-launcher:legacy    -> discvault:latest    (legacy single container)
 discvault-launcher:dev       -> discvault:dev
 discvault-launcher:v26-beta  -> discvault:v26-beta
 discvault-launcher:v26       -> discvault:v26

@@ -1,0 +1,28 @@
+services:
+  next-api:
+    image: ${DISCVAULT_IMAGE}
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      DB_PATH: /data/discvault.db
+      POSTER_DIR: /data/posters
+      PROFILE_DIR: /data/profiles
+      BACKUP_DIR: /data/backups
+      RP_ID: ${RP_ID}
+      RP_NAME: ${RP_NAME}
+      RP_ORIGIN: ${RP_ORIGIN}
+    volumes:
+      - ${DISCVAULT_DATA_DIR_HOST}:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - discvault-stack
+
+networks:
+  discvault-stack:
+    external: true
+    name: ${DISCVAULT_NETWORK}

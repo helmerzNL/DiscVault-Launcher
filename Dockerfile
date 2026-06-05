@@ -7,8 +7,9 @@ RUN apk add --no-cache ca-certificates curl docker-cli-compose nginx openssl \
     && mkdir -p /run/nginx /var/lib/nginx/tmp/client_body /opt/discvault-launcher
 
 COPY launcher/entrypoint.sh /usr/local/bin/discvault-launcher
-COPY launcher/nginx.conf /etc/nginx/http.d/default.conf
+COPY launcher/nginx.conf /opt/discvault-launcher/nginx.conf.template
 COPY stack/docker-compose.launcher.yml /opt/discvault-launcher/docker-compose.yml
+COPY stack/docker-compose.legacy.yml /opt/discvault-launcher/docker-compose.legacy.yml
 
 RUN chmod +x /usr/local/bin/discvault-launcher
 

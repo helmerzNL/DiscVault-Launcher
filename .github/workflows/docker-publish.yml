@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       stack_image:
-        description: DiscVault stack image baked into the launcher when DISCVAULT_IMAGE=auto.
+        description: DiscVault app image baked into the launcher when DISCVAULT_IMAGE=auto.
         required: false
         default: ghcr.io/helmerznl/discvault:dev
       launcher_tag:
@@ -54,16 +54,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF}" == "refs/heads/release/v26-dev" ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            image="${{ github.event.inputs.stack_image || 'ghcr.io/helmerznl/discvault:dev' }}"
+          elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            image="ghcr.io/helmerznl/discvault:latest"
+          elif [[ "${GITHUB_REF}" == "refs/heads/release/v26-dev" ]]; then
             image="ghcr.io/helmerznl/discvault:dev"
+          elif [[ "${GITHUB_REF}" == "refs/heads/release/v26-beta" ]]; then
+            image="ghcr.io/helmerznl/discvault:v26-beta"
           elif [[ "${GITHUB_REF}" == "refs/heads/release/v26" ]]; then
             image="ghcr.io/helmerznl/discvault:v26"
           elif [[ "${GITHUB_REF}" == refs/tags/v26.* ]]; then
             image="ghcr.io/helmerznl/discvault:${GITHUB_REF_NAME}"
-          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            image="ghcr.io/helmerznl/discvault:v26-beta"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            image="${{ github.event.inputs.stack_image || 'ghcr.io/helmerznl/discvault:dev' }}"
           else
             image="ghcr.io/helmerznl/discvault:v26-beta"
           fi
@@ -88,8 +90,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+            type=raw,value=legacy,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
             type=raw,value=dev,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26-dev' }}
-            type=raw,value=v26-beta,enable=${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release/v26-beta') }}
+            type=raw,value=v26-beta,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26-beta' }}
             type=raw,value=v26,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26' }}
             type=ref,event=tag,enable=${{ startsWith(github.ref, 'refs/tags/v26.') }}
             type=raw,value=${{ github.event.inputs.launcher_tag || 'dev' }},enable=${{ github.event_name == 'workflow_dispatch' }}

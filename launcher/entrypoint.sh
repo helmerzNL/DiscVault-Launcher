@@ -71,6 +71,21 @@ else
   STACK_IMAGE="$DISCVAULT_IMAGE"
 fi
 export DISCVAULT_IMAGE="$STACK_IMAGE"
+DEPLOYMENT_MODE="${DISCVAULT_DEPLOYMENT_MODE:-auto}"
+if [ "$DEPLOYMENT_MODE" = "auto" ]; then
+  case "$STACK_IMAGE" in
+    *:latest|*:legacy)
+      DEPLOYMENT_MODE="legacy"
+      ;;
+    *)
+      DEPLOYMENT_MODE="stack"
+      ;;
+  esac
+fi
+if [ "$DEPLOYMENT_MODE" != "legacy" ] && [ "$DEPLOYMENT_MODE" != "stack" ]; then
+  log "Unsupported DISCVAULT_DEPLOYMENT_MODE=$DEPLOYMENT_MODE; use auto, legacy, or stack"
+  exit 1
+fi
 FORCE_RECREATE_ON_PULL="${DISCVAULT_FORCE_RECREATE_ON_PULL:-true}"
 ALWAYS_RECREATE_STACK="${DISCVAULT_ALWAYS_RECREATE_STACK:-false}"
 
@@ -87,6 +102,7 @@ set_env POSTGRES_USER "${POSTGRES_USER:-discvault_next}" "$ENV_FILE"
 set_env RP_ID "${RP_ID:-localhost}" "$ENV_FILE"
 set_env RP_NAME "${RP_NAME:-DiscVault}" "$ENV_FILE"
 set_env RP_ORIGINS "$RP_ORIGINS_VALUE" "$ENV_FILE"
+set_env RP_ORIGIN "${RP_ORIGIN:-$RP_ORIGINS_VALUE}" "$ENV_FILE"
 set_env DISCVAULT_NEXT_API_WORKERS "${DISCVAULT_NEXT_API_WORKERS:-2}" "$ENV_FILE"
 set_env DISCVAULT_NEXT_API_TIMEOUT "${DISCVAULT_NEXT_API_TIMEOUT:-180}" "$ENV_FILE"
 set_env DISCVAULT_WORKER_ID "${DISCVAULT_WORKER_ID:-next-worker-1}" "$ENV_FILE"
@@ -105,18 +121,25 @@ else
   ensure_env JWT_SECRET "$(random_secret)" "$ENV_FILE"
 fi
 
-cp /opt/discvault-launcher/docker-compose.yml "$COMPOSE_FILE"
+if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
+  cp /opt/discvault-launcher/docker-compose.legacy.yml "$COMPOSE_FILE"
+  DISCVAULT_UPSTREAM="next-api:80"
+else
+  cp /opt/discvault-launcher/docker-compose.yml "$COMPOSE_FILE"
+  DISCVAULT_UPSTREAM="next-api:5000"
+fi
+sed "s#__DISCVAULT_UPSTREAM__#$DISCVAULT_UPSTREAM#g" /opt/discvault-launcher/nginx.conf.template > /etc/nginx/http.d/default.conf
 
 log "Ensuring Docker network $NETWORK_NAME exists"
 docker network create "$NETWORK_NAME" >/dev/null 2>&1 || true
 docker network connect "$NETWORK_NAME" "$(hostname)" >/dev/null 2>&1 || true
 
 if [ -n "$PACKAGED_STACK_IMAGE" ] || [ -n "$PACKAGED_STACK_DIGEST" ]; then
-  log "Launcher packaged stack image ${PACKAGED_STACK_IMAGE:-unknown} digest ${PACKAGED_STACK_DIGEST:-unknown}"
+  log "Launcher packaged DiscVault image ${PACKAGED_STACK_IMAGE:-unknown} digest ${PACKAGED_STACK_DIGEST:-unknown}"
 fi
 
 STACK_IMAGE_BEFORE="$(image_id "$STACK_IMAGE")"
-log "Managed DiscVault stack image $STACK_IMAGE local image ${STACK_IMAGE_BEFORE:-missing before pull}"
+log "Managed DiscVault image $STACK_IMAGE local image ${STACK_IMAGE_BEFORE:-missing before pull}"
 
 log "Pulling DiscVault image $STACK_IMAGE"
 if ! docker pull "$STACK_IMAGE"; then
@@ -124,19 +147,24 @@ if ! docker pull "$STACK_IMAGE"; then
 fi
 
 STACK_IMAGE_AFTER="$(image_id "$STACK_IMAGE")"
-log "Managed DiscVault stack image $STACK_IMAGE local image ${STACK_IMAGE_AFTER:-missing after pull}"
+log "Managed DiscVault image $STACK_IMAGE local image ${STACK_IMAGE_AFTER:-missing after pull}"
 UP_ARGS="-d --remove-orphans"
 FORCE_RECREATE_REASON=""
 LAST_STACK_DIGEST="$(cat "$LAST_STACK_DIGEST_FILE" 2>/dev/null || true)"
-log "Last applied DiscVault stack digest ${LAST_STACK_DIGEST:-none}"
+log "DiscVault deployment mode $DEPLOYMENT_MODE using upstream $DISCVAULT_UPSTREAM"
+log "Last applied DiscVault image digest ${LAST_STACK_DIGEST:-none}"
 if [ "$ALWAYS_RECREATE_STACK" = "true" ]; then
   FORCE_RECREATE_REASON="DISCVAULT_ALWAYS_RECREATE_STACK=true"
 elif [ "$FORCE_RECREATE_ON_PULL" = "true" ] && [ -n "$PACKAGED_STACK_DIGEST" ] && [ "$PACKAGED_STACK_DIGEST" != "unknown" ] && [ "$PACKAGED_STACK_DIGEST" != "$LAST_STACK_DIGEST" ]; then
-  FORCE_RECREATE_REASON="Packaged DiscVault stack digest changed from ${LAST_STACK_DIGEST:-none} to $PACKAGED_STACK_DIGEST"
+  FORCE_RECREATE_REASON="Packaged DiscVault image digest changed from ${LAST_STACK_DIGEST:-none} to $PACKAGED_STACK_DIGEST"
 elif [ "$FORCE_RECREATE_ON_PULL" = "true" ] && [ -n "$STACK_IMAGE_BEFORE" ] && [ -n "$STACK_IMAGE_AFTER" ] && [ "$STACK_IMAGE_BEFORE" != "$STACK_IMAGE_AFTER" ]; then
   FORCE_RECREATE_REASON="DiscVault image changed from $STACK_IMAGE_BEFORE to $STACK_IMAGE_AFTER"
 elif [ "$FORCE_RECREATE_ON_PULL" = "true" ] && [ -n "$STACK_IMAGE_AFTER" ]; then
-  if ! service_uses_image next-api "$STACK_IMAGE_AFTER" || ! service_uses_image next-worker "$STACK_IMAGE_AFTER"; then
+  if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
+    if ! service_uses_image next-api "$STACK_IMAGE_AFTER"; then
+      FORCE_RECREATE_REASON="Running DiscVault legacy container is not using local $STACK_IMAGE image $STACK_IMAGE_AFTER"
+    fi
+  elif ! service_uses_image next-api "$STACK_IMAGE_AFTER" || ! service_uses_image next-worker "$STACK_IMAGE_AFTER"; then
     FORCE_RECREATE_REASON="Running DiscVault containers are not using local $STACK_IMAGE image $STACK_IMAGE_AFTER"
   fi
 fi
@@ -146,7 +174,7 @@ if [ -n "$FORCE_RECREATE_REASON" ]; then
   UP_ARGS="-d --remove-orphans --force-recreate"
 fi
 
-log "Starting or updating DiscVault stack project $PROJECT_NAME"
+log "Starting or updating DiscVault $DEPLOYMENT_MODE project $PROJECT_NAME"
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up $UP_ARGS
 if [ -n "$PACKAGED_STACK_DIGEST" ] && [ "$PACKAGED_STACK_DIGEST" != "unknown" ]; then
   printf '%s\n' "$PACKAGED_STACK_DIGEST" > "$LAST_STACK_DIGEST_FILE"
