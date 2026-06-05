@@ -56,6 +56,16 @@ ensure_env() {
   fi
 }
 
+ensure_non_empty_env() {
+  key="$1"
+  value="$2"
+  file="$3"
+  current="$(grep "^${key}=" "$file" 2>/dev/null | tail -n 1 | cut -d= -f2- || true)"
+  if [ -z "$current" ]; then
+    set_env "$key" "$value" "$file"
+  fi
+}
+
 CONFIG_DIR="${DISCVAULT_LAUNCHER_CONFIG:-/config}"
 ENV_FILE="$CONFIG_DIR/stack.env"
 COMPOSE_FILE="$CONFIG_DIR/docker-compose.yml"
@@ -112,13 +122,13 @@ set_env DISCVAULT_NEXT_ENABLE_TEST_RESET "${DISCVAULT_NEXT_ENABLE_TEST_RESET:-fa
 if [ -n "${POSTGRES_PASSWORD:-}" ]; then
   set_env POSTGRES_PASSWORD "$POSTGRES_PASSWORD" "$ENV_FILE"
 else
-  ensure_env POSTGRES_PASSWORD "$(random_secret)" "$ENV_FILE"
+  ensure_non_empty_env POSTGRES_PASSWORD "$(random_secret)" "$ENV_FILE"
 fi
 
 if [ -n "${JWT_SECRET:-}" ]; then
   set_env JWT_SECRET "$JWT_SECRET" "$ENV_FILE"
 else
-  ensure_env JWT_SECRET "$(random_secret)" "$ENV_FILE"
+  ensure_non_empty_env JWT_SECRET "$(random_secret)" "$ENV_FILE"
 fi
 
 if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
