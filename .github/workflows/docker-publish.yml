@@ -21,7 +21,7 @@ on:
         default: dev
 
 concurrency:
-  group: launcher-${{ github.ref }}
+  group: launcher-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.launcher_tag || github.ref }}
   cancel-in-progress: true
 
 env:
