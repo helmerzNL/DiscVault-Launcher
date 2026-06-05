@@ -88,9 +88,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/release/v26-dev' }}
-            type=raw,value=v26-beta,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release/v26-beta' }}
-            type=raw,value=v26,enable=${{ github.ref == 'refs/heads/release/v26' }}
+            type=raw,value=dev,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26-dev' }}
+            type=raw,value=v26-beta,enable=${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release/v26-beta') }}
+            type=raw,value=v26,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26' }}
             type=ref,event=tag,enable=${{ startsWith(github.ref, 'refs/tags/v26.') }}
             type=raw,value=${{ github.event.inputs.launcher_tag || 'dev' }},enable=${{ github.event_name == 'workflow_dispatch' }}
           labels: |
