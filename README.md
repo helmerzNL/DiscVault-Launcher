@@ -72,6 +72,10 @@ docker run -d \
 
 The first start writes generated secrets to `/config/stack.env`. Keep that file
 stable; it contains the PostgreSQL password and JWT secret used by the stack.
+In legacy `latest`/`legacy` mode, the same generated `JWT_SECRET`, `RP_ID`,
+`RP_ORIGIN`, and `RP_ORIGINS` values are passed through to the actual
+`discvault:latest` app container so existing passkeys keep working after a
+launcher restart.
 
 ## Unraid Community Apps
 
@@ -156,6 +160,19 @@ want to override that channel intentionally.
 the launcher resolves to `discvault:latest` or `discvault:legacy`, it starts
 only that one container and does not pull or start PostgreSQL, `next-api`, or
 `next-worker`.
+
+For legacy passkeys, configure these values on the launcher and keep them
+stable:
+
+```text
+RP_ID=app.discvault.eu
+RP_ORIGIN=https://app.discvault.eu
+RP_ORIGINS=https://app.discvault.eu
+JWT_SECRET=<stable random secret, or leave empty once so the launcher persists one in /config/stack.env>
+```
+
+`RP_ID` must be the public domain only. `RP_ORIGIN` and `RP_ORIGINS` must match
+the exact browser origin used for registration and login.
 
 Channel mapping:
 

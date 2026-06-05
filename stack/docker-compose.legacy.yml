@@ -11,6 +11,8 @@ services:
       RP_ID: ${RP_ID}
       RP_NAME: ${RP_NAME}
       RP_ORIGIN: ${RP_ORIGIN}
+      RP_ORIGINS: ${RP_ORIGINS}
+      JWT_SECRET: ${JWT_SECRET}
     volumes:
       - ${DISCVAULT_DATA_DIR_HOST}:/data
     healthcheck:
