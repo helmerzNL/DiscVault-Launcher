@@ -118,9 +118,9 @@ fi
 STACK_IMAGE_BEFORE="$(image_id "$STACK_IMAGE")"
 log "Managed DiscVault stack image $STACK_IMAGE local image ${STACK_IMAGE_BEFORE:-missing before pull}"
 
-log "Pulling DiscVault stack images"
-if ! docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" pull; then
-  log "Image pull failed; continuing with locally available images"
+log "Pulling DiscVault image $STACK_IMAGE"
+if ! docker pull "$STACK_IMAGE"; then
+  log "DiscVault image pull failed; continuing with locally available image"
 fi
 
 STACK_IMAGE_AFTER="$(image_id "$STACK_IMAGE")"

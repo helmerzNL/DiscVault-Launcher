@@ -45,7 +45,7 @@ jobs:
           if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
             image="ghcr.io/helmerznl/discvault:beta"
           elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            image="ghcr.io/helmerznl/discvault:latest"
+            image="ghcr.io/helmerznl/discvault:beta"
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             image="ghcr.io/helmerznl/discvault:dev"
           else

@@ -99,7 +99,7 @@ launcher tag when the stack image changes.
    republishes `helmerznl/discvault-launcher:beta`.
 2. Unraid detects the launcher image update.
 3. Community Apps or the Auto Update plugin updates the launcher container.
-4. The launcher starts and pulls `DISCVAULT_IMAGE`.
+4. The launcher starts and pulls only the resolved DiscVault app image.
 5. The launcher runs `docker compose up -d --remove-orphans` for project
    `discvault_stack`.
 6. `next-api` applies PostgreSQL migrations before serving traffic.
@@ -107,8 +107,9 @@ launcher tag when the stack image changes.
 
 By default the launcher stores the packaged stack digest in
 `/config/last-stack-digest` after a successful start. When a newer launcher
-image represents a different stack digest, it adds `--force-recreate` after
-pulling so the managed services definitely restart on the freshly pulled image.
+image represents a different stack digest, it pulls only that DiscVault app
+image and adds `--force-recreate` so the managed services definitely restart on
+the freshly pulled image.
 It also compares the local `DISCVAULT_IMAGE` image ID before and after pulling,
 and checks whether `next-api` and `next-worker` use that local image ID. Set
 `DISCVAULT_FORCE_RECREATE_ON_PULL=false` to disable that behavior.
@@ -137,11 +138,13 @@ DISCVAULT_IMAGE: auto
 ```
 
 The scheduled watcher publishes `discvault-launcher:beta` for
-`discvault:beta`, `discvault-launcher:dev` for `discvault:dev`, and
-`discvault-launcher:latest` for `discvault:latest`. With
+`discvault:beta` and `discvault-launcher:dev` for `discvault:dev`. With
 `DISCVAULT_IMAGE=auto`, the launcher starts the stack image baked into its own
 channel. Set `DISCVAULT_IMAGE` to a full image reference only when you want to
 override that channel intentionally.
+
+`ghcr.io/helmerznl/discvault:latest` is the legacy single-container app and is
+not managed by the launcher stack.
 
 ## Manual Stack Removal
 
