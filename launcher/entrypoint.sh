@@ -82,6 +82,13 @@ require_non_empty_env() {
   fi
 }
 
+export_env_from_file() {
+  key="$1"
+  file="$2"
+  value="$(env_file_value "$key" "$file")"
+  export "$key=$value"
+}
+
 CONFIG_DIR="${DISCVAULT_LAUNCHER_CONFIG:-/config}"
 ENV_FILE="$CONFIG_DIR/stack.env"
 COMPOSE_FILE="$CONFIG_DIR/docker-compose.yml"
@@ -151,6 +158,30 @@ fi
 require_non_empty_env POSTGRES_PASSWORD "$ENV_FILE"
 require_non_empty_env JWT_SECRET "$ENV_FILE"
 log "Verified launcher secrets are present in $ENV_FILE"
+
+for key in \
+  TZ \
+  DISCVAULT_IMAGE \
+  DISCVAULT_DATA_DIR_HOST \
+  DISCVAULT_POSTGRES_DATA_DIR_HOST \
+  DISCVAULT_NETWORK \
+  POSTGRES_DB \
+  POSTGRES_USER \
+  POSTGRES_PASSWORD \
+  JWT_SECRET \
+  RP_ID \
+  RP_NAME \
+  RP_ORIGIN \
+  RP_ORIGINS \
+  DISCVAULT_NEXT_API_WORKERS \
+  DISCVAULT_NEXT_API_TIMEOUT \
+  DISCVAULT_WORKER_ID \
+  DISCVAULT_WORKER_POLL_INTERVAL \
+  DISCVAULT_NEXT_ENABLE_TEST_RESET
+do
+  export_env_from_file "$key" "$ENV_FILE"
+done
+log "Exported launcher env file values for Docker Compose"
 
 if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
   cp /opt/discvault-launcher/docker-compose.legacy.yml "$COMPOSE_FILE"
