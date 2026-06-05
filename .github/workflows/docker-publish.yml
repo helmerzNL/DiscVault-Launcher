@@ -4,8 +4,11 @@ on:
   push:
     branches:
       - main
+      - release/v26-dev
+      - release/v26-beta
+      - release/v26
     tags:
-      - "v*.*.*"
+      - "v26.*.*"
   workflow_dispatch:
 
 concurrency:
@@ -42,14 +45,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            image="ghcr.io/helmerznl/discvault:beta"
+          if [[ "${GITHUB_REF}" == "refs/heads/release/v26-dev" ]]; then
+            image="ghcr.io/helmerznl/discvault:dev"
+          elif [[ "${GITHUB_REF}" == "refs/heads/release/v26" ]]; then
+            image="ghcr.io/helmerznl/discvault:v26"
+          elif [[ "${GITHUB_REF}" == refs/tags/v26.* ]]; then
+            image="ghcr.io/helmerznl/discvault:${GITHUB_REF_NAME}"
           elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            image="ghcr.io/helmerznl/discvault:beta"
+            image="ghcr.io/helmerznl/discvault:v26-beta"
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             image="ghcr.io/helmerznl/discvault:dev"
           else
-            image="ghcr.io/helmerznl/discvault:beta"
+            image="ghcr.io/helmerznl/discvault:v26-beta"
           fi
           echo "image=$image" >> "$GITHUB_OUTPUT"
 
@@ -72,12 +79,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=beta,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}
-            type=raw,value=dev-${{ github.sha }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/release/v26-dev' || github.event_name == 'workflow_dispatch' }}
+            type=raw,value=v26-beta,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release/v26-beta' }}
+            type=raw,value=v26,enable=${{ github.ref == 'refs/heads/release/v26' }}
+            type=ref,event=tag,enable=${{ startsWith(github.ref, 'refs/tags/v26.') }}
           labels: |
             org.opencontainers.image.title=DiscVault Launcher
             org.opencontainers.image.description=Unraid Community Apps launcher for the DiscVault Docker stack.

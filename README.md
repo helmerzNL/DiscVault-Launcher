@@ -96,7 +96,7 @@ That workflow checks the `DISCVAULT_IMAGE` channel digest and republishes the
 launcher tag when the stack image changes.
 
 1. `Stack Image Update Watch` sees a new `helmerznl/discvault` digest and
-   republishes `helmerznl/discvault-launcher:beta`.
+   republishes the matching launcher channel.
 2. Unraid detects the launcher image update.
 3. Community Apps or the Auto Update plugin updates the launcher container.
 4. The launcher starts and pulls only the resolved DiscVault app image.
@@ -120,13 +120,13 @@ launcher start after pulling.
 
 Manual testing with the current Next channel can republish the beta launcher
 when the development stack image changes. Use this while the Unraid template is
-still installed as `discvault-launcher:beta` but `DISCVAULT_IMAGE` points to
+still installed as `discvault-launcher:v26-beta` but `DISCVAULT_IMAGE` points to
 `ghcr.io/helmerznl/discvault:dev`:
 
 ```bash
 gh workflow run "Stack Image Update Watch" \
   -f stack_image=ghcr.io/helmerznl/discvault:dev \
-  -f launcher_tag=beta \
+  -f launcher_tag=v26-beta \
   -f force=true
 ```
 
@@ -137,8 +137,10 @@ Repository:      ghcr.io/helmerznl/discvault-launcher:dev
 DISCVAULT_IMAGE: auto
 ```
 
-The scheduled watcher publishes `discvault-launcher:beta` for
-`discvault:beta` and `discvault-launcher:dev` for `discvault:dev`. With
+The scheduled watcher publishes `discvault-launcher:dev` for `discvault:dev`,
+`discvault-launcher:v26-beta` for `discvault:v26-beta`, and
+`discvault-launcher:v26` for `discvault:v26`. Immutable release tags such as
+`v26.0.0` can publish matching launcher and stack images. With
 `DISCVAULT_IMAGE=auto`, the launcher starts the stack image baked into its own
 channel. Set `DISCVAULT_IMAGE` to a full image reference only when you want to
 override that channel intentionally.
