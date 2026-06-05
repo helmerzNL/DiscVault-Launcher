@@ -56,13 +56,29 @@ ensure_env() {
   fi
 }
 
+env_file_value() {
+  key="$1"
+  file="$2"
+  grep "^${key}=" "$file" 2>/dev/null | tail -n 1 | cut -d= -f2- || true
+}
+
 ensure_non_empty_env() {
   key="$1"
   value="$2"
   file="$3"
-  current="$(grep "^${key}=" "$file" 2>/dev/null | tail -n 1 | cut -d= -f2- || true)"
+  current="$(env_file_value "$key" "$file")"
   if [ -z "$current" ]; then
     set_env "$key" "$value" "$file"
+  fi
+}
+
+require_non_empty_env() {
+  key="$1"
+  file="$2"
+  current="$(env_file_value "$key" "$file")"
+  if [ -z "$current" ]; then
+    log "Required launcher env $key is empty in $file"
+    exit 1
   fi
 }
 
@@ -101,6 +117,8 @@ ALWAYS_RECREATE_STACK="${DISCVAULT_ALWAYS_RECREATE_STACK:-false}"
 
 mkdir -p "$CONFIG_DIR"
 touch "$ENV_FILE"
+log "Using launcher config directory $CONFIG_DIR"
+log "Using launcher env file $ENV_FILE"
 
 set_env TZ "${TZ:-Europe/Amsterdam}" "$ENV_FILE"
 set_env DISCVAULT_IMAGE "$STACK_IMAGE" "$ENV_FILE"
@@ -130,6 +148,9 @@ if [ -n "${JWT_SECRET:-}" ]; then
 else
   ensure_non_empty_env JWT_SECRET "$(random_secret)" "$ENV_FILE"
 fi
+require_non_empty_env POSTGRES_PASSWORD "$ENV_FILE"
+require_non_empty_env JWT_SECRET "$ENV_FILE"
+log "Verified launcher secrets are present in $ENV_FILE"
 
 if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
   cp /opt/discvault-launcher/docker-compose.legacy.yml "$COMPOSE_FILE"
