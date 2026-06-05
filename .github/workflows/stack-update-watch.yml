@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: "17 */4 * * *"
     - cron: "47 */4 * * *"
+    - cron: "07 */4 * * *"
   workflow_dispatch:
     inputs:
       stack_image:
@@ -55,7 +56,10 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            if [[ "${{ github.event.schedule }}" == "47 */4 * * *" ]]; then
+            if [[ "${{ github.event.schedule }}" == "07 */4 * * *" ]]; then
+              echo "stack_image=ghcr.io/helmerznl/discvault:latest" >> "$GITHUB_OUTPUT"
+              echo "launcher_tag=latest" >> "$GITHUB_OUTPUT"
+            elif [[ "${{ github.event.schedule }}" == "47 */4 * * *" ]]; then
               echo "stack_image=ghcr.io/helmerznl/discvault:dev" >> "$GITHUB_OUTPUT"
               echo "launcher_tag=dev" >> "$GITHUB_OUTPUT"
             else

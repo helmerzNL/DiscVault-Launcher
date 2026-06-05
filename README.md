@@ -133,11 +133,15 @@ For predictable development updates, use matching development tags in Unraid:
 
 ```text
 Repository:      ghcr.io/helmerznl/discvault-launcher:dev
-DISCVAULT_IMAGE: ghcr.io/helmerznl/discvault:dev
+DISCVAULT_IMAGE: auto
 ```
 
 The scheduled watcher publishes `discvault-launcher:beta` for
-`discvault:beta` and `discvault-launcher:dev` for `discvault:dev`.
+`discvault:beta`, `discvault-launcher:dev` for `discvault:dev`, and
+`discvault-launcher:latest` for `discvault:latest`. With
+`DISCVAULT_IMAGE=auto`, the launcher starts the stack image baked into its own
+channel. Set `DISCVAULT_IMAGE` to a full image reference only when you want to
+override that channel intentionally.
 
 ## Manual Stack Removal
 

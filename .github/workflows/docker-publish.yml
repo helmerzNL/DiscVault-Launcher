@@ -15,7 +15,6 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: helmerznl/discvault-launcher
-  DISCVAULT_STACK_IMAGE: ghcr.io/helmerznl/discvault:beta
 
 jobs:
   build-and-push:
@@ -38,16 +37,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Select default stack image
+        id: stack-target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            image="ghcr.io/helmerznl/discvault:beta"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            image="ghcr.io/helmerznl/discvault:latest"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            image="ghcr.io/helmerznl/discvault:dev"
+          else
+            image="ghcr.io/helmerznl/discvault:beta"
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
       - name: Resolve default stack digest
         id: stack
         shell: bash
         run: |
           set -euo pipefail
-          digest="$(docker buildx imagetools inspect "$DISCVAULT_STACK_IMAGE" --format '{{.Manifest.Digest}}' 2>/dev/null || true)"
+          stack_image="${{ steps.stack-target.outputs.image }}"
+          digest="$(docker buildx imagetools inspect "$stack_image" --format '{{.Manifest.Digest}}' 2>/dev/null || true)"
           if [[ -z "$digest" || "$digest" == "<nil>" ]]; then
             digest="unknown"
           fi
-          echo "image=$DISCVAULT_STACK_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "image=$stack_image" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Docker meta
