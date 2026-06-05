@@ -148,6 +148,23 @@ override that channel intentionally.
 `ghcr.io/helmerznl/discvault:latest` is the legacy single-container app and is
 not managed by the launcher stack.
 
+Channel mapping:
+
+```text
+discvault-launcher:dev       -> discvault:dev
+discvault-launcher:v26-beta  -> discvault:v26-beta
+discvault-launcher:v26       -> discvault:v26
+discvault-launcher:v26.0.0   -> discvault:v26.0.0
+```
+
+Manual launcher builds can publish any matching channel:
+
+```bash
+gh workflow run "Build & Publish DiscVault Launcher" \
+  -f stack_image=ghcr.io/helmerznl/discvault:v26.0.0 \
+  -f launcher_tag=v26.0.0
+```
+
 ## Manual Stack Removal
 
 Removing the launcher container does not delete the managed stack. That protects
