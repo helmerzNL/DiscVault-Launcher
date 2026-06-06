@@ -132,12 +132,14 @@ set_env DISCVAULT_IMAGE "$STACK_IMAGE" "$ENV_FILE"
 set_env DISCVAULT_DATA_DIR_HOST "${DISCVAULT_DATA_DIR_HOST:-/mnt/user/appdata/discvault}" "$ENV_FILE"
 set_env DISCVAULT_POSTGRES_DATA_DIR_HOST "${DISCVAULT_POSTGRES_DATA_DIR_HOST:-/mnt/user/appdata/discvault-postgres}" "$ENV_FILE"
 set_env DISCVAULT_NETWORK "$NETWORK_NAME" "$ENV_FILE"
+set_env BUILD_VERSION "${BUILD_VERSION:-v26}" "$ENV_FILE"
 set_env POSTGRES_DB "${POSTGRES_DB:-discvault_next}" "$ENV_FILE"
 set_env POSTGRES_USER "${POSTGRES_USER:-discvault_next}" "$ENV_FILE"
 set_env RP_ID "${RP_ID:-localhost}" "$ENV_FILE"
 set_env RP_NAME "${RP_NAME:-DiscVault}" "$ENV_FILE"
 set_env RP_ORIGINS "$RP_ORIGINS_VALUE" "$ENV_FILE"
 set_env RP_ORIGIN "${RP_ORIGIN:-$RP_ORIGINS_VALUE}" "$ENV_FILE"
+set_env DISCVAULT_NEXT_MCP_PORT "${DISCVAULT_NEXT_MCP_PORT:-6090}" "$ENV_FILE"
 set_env DISCVAULT_NEXT_API_WORKERS "${DISCVAULT_NEXT_API_WORKERS:-2}" "$ENV_FILE"
 set_env DISCVAULT_NEXT_API_TIMEOUT "${DISCVAULT_NEXT_API_TIMEOUT:-180}" "$ENV_FILE"
 set_env DISCVAULT_WORKER_ID "${DISCVAULT_WORKER_ID:-next-worker-1}" "$ENV_FILE"
@@ -165,6 +167,7 @@ for key in \
   DISCVAULT_DATA_DIR_HOST \
   DISCVAULT_POSTGRES_DATA_DIR_HOST \
   DISCVAULT_NETWORK \
+  BUILD_VERSION \
   POSTGRES_DB \
   POSTGRES_USER \
   POSTGRES_PASSWORD \
@@ -173,6 +176,7 @@ for key in \
   RP_NAME \
   RP_ORIGIN \
   RP_ORIGINS \
+  DISCVAULT_NEXT_MCP_PORT \
   DISCVAULT_NEXT_API_WORKERS \
   DISCVAULT_NEXT_API_TIMEOUT \
   DISCVAULT_WORKER_ID \
@@ -186,11 +190,44 @@ log "Exported launcher env file values for Docker Compose"
 if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
   cp /opt/discvault-launcher/docker-compose.legacy.yml "$COMPOSE_FILE"
   DISCVAULT_UPSTREAM="next-api:80"
+  DISCVAULT_MCP_LOCATIONS=""
 else
   cp /opt/discvault-launcher/docker-compose.yml "$COMPOSE_FILE"
   DISCVAULT_UPSTREAM="next-api:5000"
+  DISCVAULT_MCP_LOCATIONS='    location = /mcp-health {
+        proxy_pass http://next-mcp:6090/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $disc_vault_forwarded_proto;
+        proxy_cache off;
+    }
+
+    location /mcp {
+        proxy_pass http://next-mcp:6090;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $disc_vault_forwarded_proto;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_cache off;
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
+    }'
 fi
-sed "s#__DISCVAULT_UPSTREAM__#$DISCVAULT_UPSTREAM#g" /opt/discvault-launcher/nginx.conf.template > /etc/nginx/http.d/default.conf
+awk -v upstream="$DISCVAULT_UPSTREAM" -v mcp_locations="$DISCVAULT_MCP_LOCATIONS" '{
+  gsub(/__DISCVAULT_UPSTREAM__/, upstream)
+  if ($0 ~ /__DISCVAULT_MCP_LOCATIONS__/) {
+    print mcp_locations
+  } else {
+    print
+  }
+}' /opt/discvault-launcher/nginx.conf.template > /etc/nginx/http.d/default.conf
 
 log "Ensuring Docker network $NETWORK_NAME exists"
 docker network create "$NETWORK_NAME" >/dev/null 2>&1 || true
@@ -226,7 +263,7 @@ elif [ "$FORCE_RECREATE_ON_PULL" = "true" ] && [ -n "$STACK_IMAGE_AFTER" ]; then
     if ! service_uses_image next-api "$STACK_IMAGE_AFTER"; then
       FORCE_RECREATE_REASON="Running DiscVault legacy container is not using local $STACK_IMAGE image $STACK_IMAGE_AFTER"
     fi
-  elif ! service_uses_image next-api "$STACK_IMAGE_AFTER" || ! service_uses_image next-worker "$STACK_IMAGE_AFTER"; then
+  elif ! service_uses_image next-api "$STACK_IMAGE_AFTER" || ! service_uses_image next-worker "$STACK_IMAGE_AFTER" || ! service_uses_image next-mcp "$STACK_IMAGE_AFTER"; then
     FORCE_RECREATE_REASON="Running DiscVault containers are not using local $STACK_IMAGE image $STACK_IMAGE_AFTER"
   fi
 fi
