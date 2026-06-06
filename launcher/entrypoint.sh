@@ -139,7 +139,7 @@ set_env RP_ID "${RP_ID:-localhost}" "$ENV_FILE"
 set_env RP_NAME "${RP_NAME:-DiscVault}" "$ENV_FILE"
 set_env RP_ORIGINS "$RP_ORIGINS_VALUE" "$ENV_FILE"
 set_env RP_ORIGIN "${RP_ORIGIN:-$RP_ORIGINS_VALUE}" "$ENV_FILE"
-set_env DISCVAULT_NEXT_MCP_PORT "${DISCVAULT_NEXT_MCP_PORT:-6090}" "$ENV_FILE"
+set_env DISCVAULT_NEXT_MCP_PORT "${DISCVAULT_NEXT_MCP_PORT:-}" "$ENV_FILE"
 set_env DISCVAULT_NEXT_API_WORKERS "${DISCVAULT_NEXT_API_WORKERS:-2}" "$ENV_FILE"
 set_env DISCVAULT_NEXT_API_TIMEOUT "${DISCVAULT_NEXT_API_TIMEOUT:-180}" "$ENV_FILE"
 set_env DISCVAULT_WORKER_ID "${DISCVAULT_WORKER_ID:-next-worker-1}" "$ENV_FILE"
@@ -193,9 +193,23 @@ if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
   DISCVAULT_MCP_LOCATIONS=""
   COMPOSE_UP_SERVICES="next-api"
 else
-  cp /opt/discvault-launcher/docker-compose.yml "$COMPOSE_FILE"
   DISCVAULT_UPSTREAM="next-api:5000"
   COMPOSE_UP_SERVICES="postgres next-api next-worker next-mcp"
+  if [ -n "${DISCVAULT_NEXT_MCP_PORT:-}" ]; then
+    DISCVAULT_MCP_PORTS='    ports:
+      - "'"$DISCVAULT_NEXT_MCP_PORT"':6090"'
+    log "Publishing DiscVault MCP direct host port $DISCVAULT_NEXT_MCP_PORT"
+  else
+    DISCVAULT_MCP_PORTS=""
+    log "DiscVault MCP direct host port disabled; use the launcher proxy at /mcp"
+  fi
+  awk -v mcp_ports="$DISCVAULT_MCP_PORTS" '{
+    if ($0 ~ /__DISCVAULT_MCP_PORTS__/) {
+      print mcp_ports
+    } else {
+      print
+    }
+  }' /opt/discvault-launcher/docker-compose.yml > "$COMPOSE_FILE"
   DISCVAULT_MCP_LOCATIONS='    location = /mcp-health {
         proxy_pass http://next-mcp:6090/health;
         proxy_http_version 1.1;

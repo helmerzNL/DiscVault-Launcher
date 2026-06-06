@@ -93,8 +93,7 @@ services:
       DISCVAULT_API: http://next-api:5000
       DISCVAULT_MCP_VERSION: ${BUILD_VERSION}
       TZ: ${TZ}
-    ports:
-      - "${DISCVAULT_NEXT_MCP_PORT}:6090"
+__DISCVAULT_MCP_PORTS__
     depends_on:
       next-api:
         condition: service_healthy
