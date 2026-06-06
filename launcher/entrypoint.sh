@@ -24,7 +24,7 @@ service_uses_image() {
   expected_image_id="$2"
   ids="$(service_container_ids "$service")"
   if [ -z "$ids" ]; then
-    return 0
+    return 1
   fi
 
   for id in $ids; do
@@ -191,9 +191,11 @@ if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
   cp /opt/discvault-launcher/docker-compose.legacy.yml "$COMPOSE_FILE"
   DISCVAULT_UPSTREAM="next-api:80"
   DISCVAULT_MCP_LOCATIONS=""
+  COMPOSE_UP_SERVICES="next-api"
 else
   cp /opt/discvault-launcher/docker-compose.yml "$COMPOSE_FILE"
   DISCVAULT_UPSTREAM="next-api:5000"
+  COMPOSE_UP_SERVICES="postgres next-api next-worker next-mcp"
   DISCVAULT_MCP_LOCATIONS='    location = /mcp-health {
         proxy_pass http://next-mcp:6090/health;
         proxy_http_version 1.1;
@@ -274,7 +276,8 @@ if [ -n "$FORCE_RECREATE_REASON" ]; then
 fi
 
 log "Starting or updating DiscVault $DEPLOYMENT_MODE project $PROJECT_NAME"
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up $UP_ARGS
+log "DiscVault compose services: $COMPOSE_UP_SERVICES"
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up $UP_ARGS $COMPOSE_UP_SERVICES
 if [ -n "$PACKAGED_STACK_DIGEST" ] && [ "$PACKAGED_STACK_DIGEST" != "unknown" ]; then
   printf '%s\n' "$PACKAGED_STACK_DIGEST" > "$LAST_STACK_DIGEST_FILE"
 fi
