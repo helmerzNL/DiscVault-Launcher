@@ -397,7 +397,7 @@ elif [ -n "$configured_image" ] && [ "$configured_image" != "auto" ]; then
   STACK_IMAGE="$configured_image"
   STACK_IMAGE_SOURCE="DISCVAULT_IMAGE"
 else
-  STACK_IMAGE="${PACKAGED_STACK_IMAGE:-ghcr.io/helmerznl/discvault:v26-beta}"
+  STACK_IMAGE="${PACKAGED_STACK_IMAGE:-ghcr.io/helmerznl/discvault:latest}"
   STACK_IMAGE_SOURCE="packaged-default"
 fi
 

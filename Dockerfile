@@ -1,6 +1,6 @@
 FROM docker:27-cli
 
-ARG DISCVAULT_STACK_IMAGE=ghcr.io/helmerznl/discvault:v26-beta
+ARG DISCVAULT_STACK_IMAGE=ghcr.io/helmerznl/discvault:latest
 ARG DISCVAULT_STACK_DIGEST=unknown
 
 RUN apk add --no-cache ca-certificates curl docker-cli-compose nginx openssl \
