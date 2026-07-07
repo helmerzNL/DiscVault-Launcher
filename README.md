@@ -99,8 +99,8 @@ reports that legacy migration is required.
 Unraid can only check the container image that Community Apps installed. It
 cannot see updates for the child Compose containers that the launcher manages.
 For that reason the launcher repository contains `Stack Image Update Watch`.
-That workflow checks the `DISCVAULT_IMAGE` channel digest and republishes the
-launcher tag when the stack image changes.
+That workflow checks the DiscVault channel digest and republishes the launcher
+tag when the stack image changes.
 
 1. `Stack Image Update Watch` sees a new `helmerznl/discvault` digest and
    republishes the matching launcher channel.
@@ -115,23 +115,61 @@ launcher tag when the stack image changes.
    traffic.
 8. The existing beta data stays in place and is imported by the migration UI.
 
-By default the launcher stores the packaged stack digest in
-`/config/last-stack-digest` after a successful start. When a newer launcher
-image represents a different stack digest, it pulls only that DiscVault app
-image and adds `--force-recreate` so the managed services definitely restart on
-the freshly pulled image.
-It also compares the local `DISCVAULT_IMAGE` image ID before and after pulling,
-and checks whether `next-api` and `next-worker` use that local image ID. Set
-`DISCVAULT_FORCE_RECREATE_ON_PULL=false` to disable that behavior.
+The launcher resolves image rollouts in this order:
+
+1. `DISCVAULT_NEXT_IMAGE` (primary override for v26 stack deployments).
+2. `DISCVAULT_IMAGE` (fallback, including `auto` behavior).
+3. Launcher-packaged default image for the current channel.
+
+For mutable tags such as `v26-beta`, the launcher resolves the current remote
+digest and treats that digest as the deployment source-of-truth. For digest
+pinned refs (`repo@sha256:...` or `repo:tag@sha256:...`), it uses the pinned
+digest exactly.
+
+Rollout decisions compare desired digest versus local digest and running
+container digest/image-id (`next-api`, `next-worker`, `next-mcp`). Any mismatch
+forces pull + recreate for the relevant services. `packaged` and
+`/config/last-stack-digest` values are retained for metadata/logging only and
+never block newer remote digests.
+
+After recreate, the launcher verifies runtime digest, image label
+`org.opencontainers.image.revision`, and (by default) `/api/next/health.sha`.
+Any mismatch exits with a non-zero error instead of reporting a vague
+"up-to-date" state.
 
 For troubleshooting or aggressive test deployments, set
 `DISCVAULT_ALWAYS_RECREATE_STACK=true`. That forces `--force-recreate` on every
 launcher start after pulling.
 
+### Temporary workaround / explicit pinning
+
+Until your target image channel has the fix live, you can force a deterministic
+build by pinning a digest in `/config/stack.env`:
+
+```env
+DISCVAULT_NEXT_IMAGE=ghcr.io/helmerznl/discvault:v26-beta@sha256:<digest>
+```
+
+Then recreate by restarting the launcher container.
+
+### Launcher boot-session logs
+
+Each launcher startup writes a timestamped boot-session logfile to:
+
+```text
+/config/logs/launcher-boot-<UTC timestamp>-<pid>.log
+```
+
+The same lines are also emitted to stdout for easy Unraid log viewing. Logs
+always include timestamps and rollout digest/sha decisions. Environment
+snapshots are logged too, but secret values (passwords/secrets/tokens/keys) are
+always redacted. Default retention is the latest 50 boot sessions
+(`DISCVAULT_BOOT_LOG_RETENTION=50`).
+
 Manual testing with the current Next channel can republish the beta launcher
 when the development stack image changes. Use this while the Unraid template is
-still installed as `discvault-launcher:v26-beta` but `DISCVAULT_IMAGE` points to
-`ghcr.io/helmerznl/discvault:dev`:
+still installed as `discvault-launcher:v26-beta` but `DISCVAULT_NEXT_IMAGE`
+points to `ghcr.io/helmerznl/discvault:dev`:
 
 ```bash
 gh workflow run "Stack Image Update Watch" \
@@ -144,6 +182,7 @@ For predictable development updates, use matching development tags in Unraid:
 
 ```text
 Repository:      ghcr.io/helmerznl/discvault-launcher:dev
+DISCVAULT_NEXT_IMAGE: auto
 DISCVAULT_IMAGE: auto
 ```
 
@@ -152,9 +191,9 @@ The scheduled watcher publishes `discvault-launcher:latest` for
 `discvault-launcher:v26-beta` for `discvault:v26-beta`, and
 `discvault-launcher:v26` for `discvault:v26`. Immutable release tags such as
 `v26.0.0` can publish matching launcher and app images. With
-`DISCVAULT_IMAGE=auto`, the launcher starts the DiscVault app image baked into
-its own channel. Set `DISCVAULT_IMAGE` to a full image reference only when you
-want to override that channel intentionally.
+`DISCVAULT_NEXT_IMAGE=auto` and `DISCVAULT_IMAGE=auto`, the launcher starts the
+DiscVault app image baked into its own channel. Set `DISCVAULT_NEXT_IMAGE` to a
+full image reference only when you want to override that channel intentionally.
 
 `ghcr.io/helmerznl/discvault:latest` is the legacy single-container app. When
 the launcher resolves to `discvault:latest` or `discvault:legacy`, it starts
