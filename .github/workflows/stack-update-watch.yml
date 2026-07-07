@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: "7 */4 * * *"
     - cron: "17 */4 * * *"
+    - cron: "37 */4 * * *"
     - cron: "47 */4 * * *"
     - cron: "27 */4 * * *"
   workflow_dispatch:
@@ -11,11 +12,11 @@ on:
       stack_image:
         description: DiscVault app image to watch.
         required: false
-        default: ghcr.io/helmerznl/discvault:v26-beta
+        default: ghcr.io/helmerznl/discvault:beta
       launcher_tag:
         description: Launcher tag to publish when the stack image changes.
         required: false
-        default: v26-beta
+        default: beta
       force:
         description: Build even when the stack digest has not changed.
         required: false
@@ -23,7 +24,7 @@ on:
         default: false
 
 concurrency:
-  group: stack-update-watch-${{ github.event.inputs.launcher_tag || github.event.schedule || 'v26-beta' }}
+  group: stack-update-watch-${{ github.event.inputs.launcher_tag || github.event.schedule || 'beta' }}
   cancel-in-progress: false
 
 env:
@@ -60,19 +61,25 @@ jobs:
             if [[ "${{ github.event.schedule }}" == "7 */4 * * *" ]]; then
               echo "stack_image=ghcr.io/helmerznl/discvault:latest" >> "$GITHUB_OUTPUT"
               echo "launcher_tag=latest" >> "$GITHUB_OUTPUT"
+            elif [[ "${{ github.event.schedule }}" == "17 */4 * * *" ]]; then
+              echo "stack_image=ghcr.io/helmerznl/discvault:beta" >> "$GITHUB_OUTPUT"
+              echo "launcher_tag=beta" >> "$GITHUB_OUTPUT"
             elif [[ "${{ github.event.schedule }}" == "47 */4 * * *" ]]; then
               echo "stack_image=ghcr.io/helmerznl/discvault:dev" >> "$GITHUB_OUTPUT"
               echo "launcher_tag=dev" >> "$GITHUB_OUTPUT"
             elif [[ "${{ github.event.schedule }}" == "27 */4 * * *" ]]; then
               echo "stack_image=ghcr.io/helmerznl/discvault:v26" >> "$GITHUB_OUTPUT"
               echo "launcher_tag=v26" >> "$GITHUB_OUTPUT"
-            else
+            elif [[ "${{ github.event.schedule }}" == "37 */4 * * *" ]]; then
               echo "stack_image=ghcr.io/helmerznl/discvault:v26-beta" >> "$GITHUB_OUTPUT"
               echo "launcher_tag=v26-beta" >> "$GITHUB_OUTPUT"
+            else
+              echo "stack_image=ghcr.io/helmerznl/discvault:beta" >> "$GITHUB_OUTPUT"
+              echo "launcher_tag=beta" >> "$GITHUB_OUTPUT"
             fi
           else
-            echo "stack_image=${{ github.event.inputs.stack_image || 'ghcr.io/helmerznl/discvault:v26-beta' }}" >> "$GITHUB_OUTPUT"
-            echo "launcher_tag=${{ github.event.inputs.launcher_tag || 'v26-beta' }}" >> "$GITHUB_OUTPUT"
+            echo "stack_image=${{ github.event.inputs.stack_image || 'ghcr.io/helmerznl/discvault:beta' }}" >> "$GITHUB_OUTPUT"
+            echo "launcher_tag=${{ github.event.inputs.launcher_tag || 'beta' }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Resolve stack digest

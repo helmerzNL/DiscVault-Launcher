@@ -181,13 +181,14 @@ always redacted. Default retention is the latest 50 boot sessions
 
 Manual testing with the current Next channel can republish the beta launcher
 when the development stack image changes. Use this while the Unraid template is
-still installed as `discvault-launcher:v26-beta` but `DISCVAULT_NEXT_IMAGE`
+installed as `discvault-launcher:beta` (or the older compatible
+`discvault-launcher:v26-beta`) but `DISCVAULT_NEXT_IMAGE`
 points to `ghcr.io/helmerznl/discvault:dev`:
 
 ```bash
 gh workflow run "Stack Image Update Watch" \
   -f stack_image=ghcr.io/helmerznl/discvault:dev \
-  -f launcher_tag=v26-beta \
+-f launcher_tag=beta \
   -f force=true
 ```
 
@@ -200,13 +201,18 @@ DISCVAULT_IMAGE: auto
 ```
 
 The scheduled watcher publishes `discvault-launcher:latest` for
-`discvault:latest`, `discvault-launcher:dev` for `discvault:dev`,
-`discvault-launcher:v26-beta` for `discvault:v26-beta`, and
-`discvault-launcher:v26` for `discvault:v26`. Immutable release tags such as
-`v26.0.0` can publish matching launcher and app images. With
+`discvault:latest`, `discvault-launcher:beta` for `discvault:beta`,
+`discvault-launcher:dev` for `discvault:dev`, `discvault-launcher:v26-beta`
+for `discvault:v26-beta`, and `discvault-launcher:v26` for `discvault:v26`.
+Immutable release tags such as `v26.0.0` can publish matching launcher and app
+images. With
 `DISCVAULT_NEXT_IMAGE=auto` and `DISCVAULT_IMAGE=auto`, the launcher starts the
 DiscVault app image baked into its own channel. Set `DISCVAULT_NEXT_IMAGE` to a
 full image reference only when you want to override that channel intentionally.
+
+For new beta installs, prefer `discvault-launcher:beta`. Keep
+`discvault-launcher:v26-beta` only as a compatibility channel for older
+templates or existing beta installs that have not switched over yet.
 
 `ghcr.io/helmerznl/discvault:latest` is the legacy single-container app. When
 the launcher resolves to `discvault:latest` or `discvault:legacy`, it starts
@@ -231,8 +237,9 @@ Channel mapping:
 ```text
 discvault-launcher:latest    -> discvault:latest    (legacy single container)
 discvault-launcher:legacy    -> discvault:latest    (legacy single container)
+discvault-launcher:beta      -> discvault:beta
 discvault-launcher:dev       -> discvault:dev
-discvault-launcher:v26-beta  -> discvault:v26-beta
+discvault-launcher:v26-beta  -> discvault:v26-beta  (compatibility channel)
 discvault-launcher:v26       -> discvault:v26
 discvault-launcher:v26.0.0   -> discvault:v26.0.0
 ```

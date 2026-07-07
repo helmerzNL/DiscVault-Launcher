@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>DiscVault</Name>
-  <Repository>ghcr.io/helmerznl/discvault-launcher:v26-beta</Repository>
+  <Repository>ghcr.io/helmerznl/discvault-launcher:beta</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <MyIP/>
@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://forums.unraid.net/topic/198808-support-discvault-physical-disc-collection-manager/</Support>
   <Project>https://github.com/helmerzNL/DiscVault-Launcher</Project>
-  <Overview>DiscVault launcher for Unraid Community Apps. The latest/legacy launcher channel starts the legacy single-container app; v26 channels update and manage the PostgreSQL-backed DiscVault 26 stack while reusing the existing DiscVault beta appdata directory for migration.</Overview>
+  <Overview>DiscVault launcher for Unraid Community Apps. The latest/legacy launcher channel starts the legacy single-container app; the beta, v26-beta, and v26 channels update and manage the PostgreSQL-backed DiscVault 26 stack while reusing the existing DiscVault beta appdata directory for migration.</Overview>
   <Category>Tools:</Category>
   <WebUI>http://[IP]:[PORT:80]</WebUI>
   <Icon>https://raw.githubusercontent.com/helmerzNL/DiscVault/main/app/frontend/favicon-192.png</Icon>
