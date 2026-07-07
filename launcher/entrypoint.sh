@@ -380,6 +380,7 @@ verify_stack_after_deploy() {
 
 CONFIG_DIR="${DISCVAULT_LAUNCHER_CONFIG:-/config}"
 ENV_FILE="$CONFIG_DIR/stack.env"
+COMPOSE_ENV_FILE="$CONFIG_DIR/.compose.env"
 COMPOSE_FILE="$CONFIG_DIR/docker-compose.yml"
 LAST_STACK_DIGEST_FILE="$CONFIG_DIR/last-stack-digest"
 PROJECT_NAME="${DISCVAULT_PROJECT_NAME:-discvault_stack}"
@@ -528,6 +529,13 @@ log_env_snapshot \
   POSTGRES_PASSWORD \
   JWT_SECRET
 
+cp "$ENV_FILE" "$COMPOSE_ENV_FILE"
+set_env DISCVAULT_IMAGE "$STACK_IMAGE" "$COMPOSE_ENV_FILE"
+if [ -n "$configured_next_image_raw" ]; then
+  set_env DISCVAULT_NEXT_IMAGE "$configured_next_image" "$COMPOSE_ENV_FILE"
+fi
+log "Prepared compose env file $COMPOSE_ENV_FILE with resolved DISCVAULT_IMAGE=$STACK_IMAGE"
+
 if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
   cp /opt/discvault-launcher/docker-compose.legacy.yml "$COMPOSE_FILE"
   DISCVAULT_UPSTREAM="next-api:80"
@@ -667,7 +675,7 @@ fi
 
 log "Starting or updating DiscVault $DEPLOYMENT_MODE project $PROJECT_NAME"
 log "DiscVault compose services: $COMPOSE_UP_SERVICES"
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up $UP_ARGS $COMPOSE_UP_SERVICES
+docker compose --env-file "$COMPOSE_ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up $UP_ARGS $COMPOSE_UP_SERVICES
 
 if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
   log_service_runtime_state "after-recreate" next-api "$STACK_IMAGE_REPO" || true
