@@ -529,6 +529,13 @@ log_env_snapshot \
   POSTGRES_PASSWORD \
   JWT_SECRET
 
+# Compose interpolation prefers the process environment over --env-file.
+# Re-apply the resolved image ref here so service images never fall back to "auto".
+export DISCVAULT_IMAGE="$STACK_IMAGE"
+if [ -n "$configured_next_image_raw" ]; then
+  export DISCVAULT_NEXT_IMAGE="$configured_next_image"
+fi
+
 cp "$ENV_FILE" "$COMPOSE_ENV_FILE"
 set_env DISCVAULT_IMAGE "$STACK_IMAGE" "$COMPOSE_ENV_FILE"
 if [ -n "$configured_next_image_raw" ]; then
