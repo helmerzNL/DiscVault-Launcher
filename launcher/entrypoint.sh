@@ -39,6 +39,24 @@ image_id() {
   docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true
 }
 
+resolve_stack_image_alias() {
+  value="$1"
+  case "$value" in
+    auto|prod|latest|v26)
+      printf '%s' 'ghcr.io/helmerznl/discvault:latest'
+      ;;
+    beta)
+      printf '%s' 'ghcr.io/helmerznl/discvault:beta'
+      ;;
+    v26-beta)
+      printf '%s' 'ghcr.io/helmerznl/discvault:v26-beta'
+      ;;
+    *)
+      printf '%s' "$value"
+      ;;
+  esac
+}
+
 normalize_digest() {
   value="$1"
   case "$value" in
@@ -387,13 +405,15 @@ log "Using launcher env file $ENV_FILE"
 log "Boot session log file $LOG_FILE"
 log "Boot session log retention ${BOOT_LOG_RETENTION} sessions"
 
-configured_next_image="${DISCVAULT_NEXT_IMAGE:-$(env_file_value DISCVAULT_NEXT_IMAGE "$ENV_FILE")}"
-configured_image="${DISCVAULT_IMAGE:-$(env_file_value DISCVAULT_IMAGE "$ENV_FILE")}"
+configured_next_image_raw="${DISCVAULT_NEXT_IMAGE:-$(env_file_value DISCVAULT_NEXT_IMAGE "$ENV_FILE")}"
+configured_image_raw="${DISCVAULT_IMAGE:-$(env_file_value DISCVAULT_IMAGE "$ENV_FILE")}"
+configured_next_image="$(resolve_stack_image_alias "$configured_next_image_raw")"
+configured_image="$(resolve_stack_image_alias "$configured_image_raw")"
 
-if [ -n "$configured_next_image" ] && [ "$configured_next_image" != "auto" ]; then
+if [ -n "$configured_next_image_raw" ] && [ "$configured_next_image_raw" != "auto" ]; then
   STACK_IMAGE="$configured_next_image"
   STACK_IMAGE_SOURCE="DISCVAULT_NEXT_IMAGE"
-elif [ -n "$configured_image" ] && [ "$configured_image" != "auto" ]; then
+elif [ -n "$configured_image_raw" ] && [ "$configured_image_raw" != "auto" ]; then
   STACK_IMAGE="$configured_image"
   STACK_IMAGE_SOURCE="DISCVAULT_IMAGE"
 else
@@ -406,7 +426,7 @@ if [ -z "$STACK_IMAGE" ]; then
 fi
 
 export DISCVAULT_IMAGE="$STACK_IMAGE"
-if [ -n "$configured_next_image" ]; then
+if [ -n "$configured_next_image_raw" ]; then
   export DISCVAULT_NEXT_IMAGE="$configured_next_image"
 fi
 
@@ -426,8 +446,8 @@ if [ "$DEPLOYMENT_MODE" != "legacy" ] && [ "$DEPLOYMENT_MODE" != "stack" ]; then
 fi
 
 set_env TZ "${TZ:-Europe/Amsterdam}" "$ENV_FILE"
-set_env DISCVAULT_IMAGE "$STACK_IMAGE" "$ENV_FILE"
-set_env DISCVAULT_NEXT_IMAGE "$configured_next_image" "$ENV_FILE"
+set_env DISCVAULT_IMAGE "${configured_image_raw:-auto}" "$ENV_FILE"
+set_env DISCVAULT_NEXT_IMAGE "$configured_next_image_raw" "$ENV_FILE"
 set_env DISCVAULT_DATA_DIR_HOST "${DISCVAULT_DATA_DIR_HOST:-/mnt/user/appdata/discvault}" "$ENV_FILE"
 set_env DISCVAULT_POSTGRES_DATA_DIR_HOST "${DISCVAULT_POSTGRES_DATA_DIR_HOST:-/mnt/user/appdata/discvault-postgres}" "$ENV_FILE"
 set_env DISCVAULT_NETWORK "$NETWORK_NAME" "$ENV_FILE"
@@ -587,7 +607,7 @@ fi
 STACK_IMAGE_REPO="$(image_repo_from_ref "$STACK_IMAGE")"
 
 LAST_STACK_DIGEST="$(cat "$LAST_STACK_DIGEST_FILE" 2>/dev/null || true)"
-log "DiscVault image selection source=$STACK_IMAGE_SOURCE configured_ref=$STACK_IMAGE repo=$STACK_IMAGE_REPO deployment_mode=$DEPLOYMENT_MODE"
+log "DiscVault image selection source=$STACK_IMAGE_SOURCE configured_next_image=${configured_next_image_raw:-<empty>} configured_image=${configured_image_raw:-<empty>} resolved_ref=$STACK_IMAGE repo=$STACK_IMAGE_REPO deployment_mode=$DEPLOYMENT_MODE"
 log "DiscVault desired digest source=$DESIRED_DIGEST_SOURCE desired_digest=$DESIRED_DIGEST"
 log "DiscVault metadata digests packaged=${PACKAGED_STACK_DIGEST:-none} last_applied=${LAST_STACK_DIGEST:-none}"
 
