@@ -121,6 +121,19 @@ The launcher resolves image rollouts in this order:
 2. `DISCVAULT_IMAGE` (fallback, including `auto` behavior).
 3. Launcher-packaged default image for the current channel.
 
+If no override is set, the safe default is `ghcr.io/helmerznl/discvault:latest`.
+Manual GitHub Actions launcher publishes should therefore default to baking in
+`discvault:latest` unless a different DiscVault image is intentionally selected.
+
+Supported shorthand values are:
+
+- `auto` -> `ghcr.io/helmerznl/discvault:latest`
+- `prod` -> `ghcr.io/helmerznl/discvault:latest`
+- `latest` -> `ghcr.io/helmerznl/discvault:latest`
+- `v26` -> `ghcr.io/helmerznl/discvault:latest`
+- `beta` -> `ghcr.io/helmerznl/discvault:beta`
+- `v26-beta` -> `ghcr.io/helmerznl/discvault:v26-beta`
+
 For mutable tags such as `v26-beta`, the launcher resolves the current remote
 digest and treats that digest as the deployment source-of-truth. For digest
 pinned refs (`repo@sha256:...` or `repo:tag@sha256:...`), it uses the pinned

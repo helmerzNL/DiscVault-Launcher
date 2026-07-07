@@ -14,11 +14,11 @@ on:
       stack_image:
         description: DiscVault app image baked into the launcher when DISCVAULT_IMAGE=auto.
         required: false
-        default: ghcr.io/helmerznl/discvault:dev
+        default: ghcr.io/helmerznl/discvault:latest
       launcher_tag:
         description: Launcher tag to publish.
         required: false
-        default: dev
+        default: latest
 
 concurrency:
   group: launcher-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.launcher_tag || github.ref }}
@@ -55,7 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            image="${{ github.event.inputs.stack_image || 'ghcr.io/helmerznl/discvault:dev' }}"
+            image="${{ github.event.inputs.stack_image || 'ghcr.io/helmerznl/discvault:latest' }}"
           elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
             image="ghcr.io/helmerznl/discvault:latest"
           elif [[ "${GITHUB_REF}" == "refs/heads/release/v26-dev" ]]; then
@@ -96,7 +96,7 @@ jobs:
             type=raw,value=v26-beta,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26-beta' }}
             type=raw,value=v26,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26' }}
             type=ref,event=tag,enable=${{ startsWith(github.ref, 'refs/tags/v26.') }}
-            type=raw,value=${{ github.event.inputs.launcher_tag || 'dev' }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ github.event.inputs.launcher_tag || 'latest' }},enable=${{ github.event_name == 'workflow_dispatch' }}
           labels: |
             org.opencontainers.image.title=DiscVault Launcher
             org.opencontainers.image.description=Unraid Community Apps launcher for the DiscVault Docker stack.
