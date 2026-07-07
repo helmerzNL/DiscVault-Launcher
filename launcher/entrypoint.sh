@@ -69,7 +69,8 @@ pinned_digest_from_ref() {
 }
 
 remote_digest_for_ref() {
-  digest="$(docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}' 2>/dev/null || true)"
+  inspect_output="$(docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}' 2>/dev/null || true)"
+  digest="$(printf '%s\n' "$inspect_output" | grep -Eo 'sha256:[0-9a-f]{64}' | head -n 1 || true)"
   if [ -z "$digest" ] || [ "$digest" = "<nil>" ]; then
     return 1
   fi
