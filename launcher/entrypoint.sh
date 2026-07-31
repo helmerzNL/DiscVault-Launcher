@@ -399,6 +399,19 @@ set_env DISCVAULT_WORKER_ID "${DISCVAULT_WORKER_ID:-next-worker-1}" "$ENV_FILE"
 set_env DISCVAULT_WORKER_POLL_INTERVAL "${DISCVAULT_WORKER_POLL_INTERVAL:-2}" "$ENV_FILE"
 set_env DISCVAULT_NEXT_ENABLE_TEST_RESET "${DISCVAULT_NEXT_ENABLE_TEST_RESET:-false}" "$ENV_FILE"
 set_env LEGACY_AUTH_ENABLED "${LEGACY_AUTH_ENABLED:-false}" "$ENV_FILE"
+
+# The launcher resolved the image tag itself, so it knows the channel. Without
+# this the app falls back to a version heuristic in resolve_update_channel().
+# An explicit value from the container env always wins.
+if [ -n "${DISCVAULT_UPDATE_CHANNEL:-}" ]; then
+  RESOLVED_UPDATE_CHANNEL="$DISCVAULT_UPDATE_CHANNEL"
+  UPDATE_CHANNEL_SOURCE="container-env"
+else
+  RESOLVED_UPDATE_CHANNEL="$(update_channel_for_ref "$STACK_IMAGE")"
+  UPDATE_CHANNEL_SOURCE="derived from $STACK_IMAGE"
+fi
+set_env DISCVAULT_UPDATE_CHANNEL "$RESOLVED_UPDATE_CHANNEL" "$ENV_FILE"
+log "DiscVault update channel $RESOLVED_UPDATE_CHANNEL ($UPDATE_CHANNEL_SOURCE)"
 set_env DISCVAULT_ADMIN_DEDUP_EXECUTE_ENABLED "${DISCVAULT_ADMIN_DEDUP_EXECUTE_ENABLED:-false}" "$ENV_FILE"
 
 # Deliberately not generated when empty: key_encryption_secret() falls back to
@@ -439,6 +452,7 @@ for key in \
   RP_ORIGIN \
   RP_ORIGINS \
   LEGACY_AUTH_ENABLED \
+  DISCVAULT_UPDATE_CHANNEL \
   DISCVAULT_NEXT_MCP_PORT \
   DISCVAULT_NEXT_API_WORKERS \
   DISCVAULT_NEXT_API_TIMEOUT \
@@ -468,6 +482,7 @@ log_env_snapshot \
   RP_ORIGIN \
   RP_ORIGINS \
   LEGACY_AUTH_ENABLED \
+  DISCVAULT_UPDATE_CHANNEL \
   DISCVAULT_NEXT_ENABLE_TEST_RESET \
   DISCVAULT_ADMIN_DEDUP_EXECUTE_ENABLED \
   POSTGRES_DB \

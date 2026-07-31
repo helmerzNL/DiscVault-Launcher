@@ -46,6 +46,42 @@ resolve_stack_image_alias() {
   esac
 }
 
+# Map a resolved image reference onto DiscVault's update channel.
+#
+# next_app.py accepts ("auto", "beta", "stable") and otherwise falls back to a
+# heuristic -- "running version newer than the latest stable release means this
+# is a pre-release build". The launcher already knows which tag it deployed, so
+# telling the app outright beats letting it guess.
+#
+# "auto" is the safe answer for anything we cannot classify (dev builds, digest
+# pins without a tag, third-party registries): normalize_update_channel() maps
+# unknown values to "auto" anyway, which restores the heuristic.
+update_channel_for_ref() {
+  ref="$1"
+
+  # Only the official repository has a known channel meaning. A private mirror
+  # may well tag a beta build as ":latest", so classifying by tag alone there
+  # would be a guess dressed up as a fact.
+  if [ "$(image_repo_from_ref "$ref")" != "$DISCVAULT_IMAGE_REPO" ]; then
+    printf '%s' 'auto'
+    return 0
+  fi
+
+  ref_without_digest="${ref%@*}"
+  last_segment="${ref_without_digest##*/}"
+  case "$last_segment" in
+    *:*) tag="${last_segment##*:}" ;;
+    *) tag="" ;;
+  esac
+
+  case "$tag" in
+    # Immutable v26.x.y snapshots are cut from main, same source as :stable.
+    latest|stable|v26|v26.*) printf '%s' 'stable' ;;
+    beta|v26-beta) printf '%s' 'beta' ;;
+    *) printf '%s' 'auto' ;;
+  esac
+}
+
 normalize_digest() {
   value="$1"
   case "$value" in

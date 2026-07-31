@@ -89,6 +89,17 @@ done
 # The API and the worker both call validate_runtime_secrets() at startup, so
 # both need the same secrets, and the key-encryption secret must match or
 # credentials encrypted by one process cannot be read by the other.
+# The launcher resolves the image tag, so it knows the channel; next_app.py
+# reads this and otherwise falls back to guessing from the version number.
+for compose in "$LAUNCHER_COMPOSE" "$STANDALONE_COMPOSE"; do
+  CHECKS=$((CHECKS + 1))
+  if service_block next-api "$compose" | grep -q '^ *DISCVAULT_UPDATE_CHANNEL:'; then
+    ok_check "$(basename "$compose") next-api sets DISCVAULT_UPDATE_CHANNEL"
+  else
+    fail_check "$(basename "$compose") next-api is missing DISCVAULT_UPDATE_CHANNEL"
+  fi
+done
+
 for compose in "$LAUNCHER_COMPOSE" "$STANDALONE_COMPOSE"; do
   for svc in next-api next-worker; do
     for key in JWT_SECRET DISCVAULT_NEXT_KEY_ENCRYPTION_KEY; do

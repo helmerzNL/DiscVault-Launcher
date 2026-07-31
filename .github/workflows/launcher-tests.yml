@@ -25,6 +25,11 @@ jobs:
           shellcheck --version
           shellcheck -s sh --severity=warning launcher/*.sh launcher/tests/*.sh
 
+      - name: Channel table tests
+        run: |
+          python3 -m pip install --quiet pyyaml
+          sh launcher/tests/test-channels.sh
+
       - name: Image resolution tests
         run: sh launcher/tests/test-image-resolution.sh
 

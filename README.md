@@ -38,8 +38,8 @@ logs a warning and runs the v26 stack.
 
 The `helmerznl/discvault-launcher:legacy` tag is no longer published as a
 result. If you are still on it, switch the Unraid repository to
-`ghcr.io/helmerznl/discvault-launcher:latest`; the frozen `discvault:legacy` app
-image can no longer be deployed by the launcher.
+`ghcr.io/helmerznl/discvault-launcher:latest` (see [Channels](#channels)); the
+frozen `discvault:legacy` app image can no longer be deployed by the launcher.
 
 ## Standalone Docker Compose
 
@@ -233,37 +233,13 @@ snapshots are logged too, but secret values (passwords/secrets/tokens/keys) are
 always redacted. Default retention is the latest 50 boot sessions
 (`DISCVAULT_BOOT_LOG_RETENTION=50`).
 
-Manual testing with the current Next channel can republish the beta launcher
-when the development stack image changes. Use this while the Unraid template is
-still installed as `discvault-launcher:v26-beta` but `DISCVAULT_NEXT_IMAGE`
-points to `ghcr.io/helmerznl/discvault:dev`:
+With `DISCVAULT_NEXT_IMAGE=auto` and `DISCVAULT_IMAGE=auto`, the launcher starts
+the DiscVault app image baked into its own channel. Set `DISCVAULT_NEXT_IMAGE`
+to a tag or full image reference only when you want to override that channel
+intentionally.
 
-```bash
-gh workflow run "Stack Image Update Watch" \
-  -f stack_image=ghcr.io/helmerznl/discvault:dev \
-  -f launcher_tag=v26-beta \
-  -f force=true
-```
-
-For predictable development updates, use matching development tags in Unraid:
-
-```text
-Repository:      ghcr.io/helmerznl/discvault-launcher:dev
-DISCVAULT_NEXT_IMAGE: auto
-DISCVAULT_IMAGE: auto
-```
-
-The scheduled watcher publishes `discvault-launcher:latest` for
-`discvault:latest`, `discvault-launcher:dev` for `discvault:dev`,
-`discvault-launcher:v26-beta` for `discvault:v26-beta`, and
-`discvault-launcher:v26` for `discvault:v26`. Immutable release tags such as
-`v26.0.0` can publish matching launcher and app images. With
-`DISCVAULT_NEXT_IMAGE=auto` and `DISCVAULT_IMAGE=auto`, the launcher starts the
-DiscVault app image baked into its own channel. Set `DISCVAULT_NEXT_IMAGE` to a
-full image reference only when you want to override that channel intentionally.
-
-`ghcr.io/helmerznl/discvault:latest` is the stable v26 stack image, not the old
-single-container app. Every channel starts PostgreSQL, `next-api`,
+`ghcr.io/helmerznl/discvault:latest` is the production v26 stack image, not the
+old single-container app. Every channel starts PostgreSQL, `next-api`,
 `next-worker`, and `next-mcp`.
 
 For stable passkeys, configure these values on the launcher and keep them
@@ -279,23 +255,55 @@ JWT_SECRET=<stable random secret, or leave empty once so the launcher persists o
 `RP_ID` must be the public domain only. `RP_ORIGIN` and `RP_ORIGINS` must match
 the exact browser origin used for registration and login.
 
-Channel mapping:
+## Channels
 
-```text
-discvault-launcher:latest    -> discvault:latest
-discvault-launcher:dev       -> discvault:dev
-discvault-launcher:v26-beta  -> discvault:v26-beta
-discvault-launcher:v26       -> discvault:v26
-discvault-launcher:v26.0.0   -> discvault:v26.0.0
-```
+There are two launcher channels. A launcher tag and the DiscVault app tag it
+bakes are different things — conflating them is how the table below drifted out
+of sync with what was actually published.
 
-Manual launcher builds can publish any matching channel:
+| Launcher repository | Bakes | Meaning |
+| --- | --- | --- |
+| `discvault-launcher:latest` | `discvault:latest` | Production, follows DiscVault `main` |
+| `discvault-launcher:beta` | `discvault:beta` | Beta, follows DiscVault `release/v26-beta` |
+
+`.github/channels.json` is the single source of truth. Both
+`Build & Publish DiscVault Launcher` and `Stack Image Update Watch` build their
+job matrix from it, and `launcher/tests/test-channels.sh` fails if a workflow
+publishes a tag the table does not list.
+
+**Deprecated aliases.** `discvault-launcher:v26-beta` is published alongside
+`:beta`, and `discvault-launcher:v26` alongside `:latest`, from the same build.
+They exist only so installs from the older Unraid template keep receiving
+updates. Move to `:beta` or `:latest`; the aliases will be dropped later.
+
+**No longer published:** `discvault-launcher:dev`, `:stable` and `:legacy`.
+Those tags may still exist in GHCR but nothing rebuilds them, so anything still
+pointing at one is frozen. Switch to `:latest` or `:beta`.
+
+Both channels are rebuilt on every push to `main`, so a launcher fix reaches
+`:beta` and `:latest` at the same time. `Stack Image Update Watch` additionally
+rebuilds a channel when the DiscVault image it tracks gets a new digest.
+
+To rebuild a single channel by hand:
 
 ```bash
+gh workflow run "Build & Publish DiscVault Launcher" -f channel=beta
+
+# Or point one channel at a different app image for a one-off test build:
 gh workflow run "Build & Publish DiscVault Launcher" \
-  -f stack_image=ghcr.io/helmerznl/discvault:v26.0.0 \
-  -f launcher_tag=v26.0.0
+  -f channel=beta \
+  -f stack_image=ghcr.io/helmerznl/discvault:dev
 ```
+
+### Update channel reported to the app
+
+DiscVault's in-app update check needs to know whether it is on beta or stable.
+Left unset, `resolve_update_channel()` guesses from the version number. The
+launcher already resolved the image tag, so it derives the channel and passes
+`DISCVAULT_UPDATE_CHANNEL` to `next-api`: `stable` for `latest`/`stable`/`v26`
+and `v26.x.y`, `beta` for `beta`/`v26-beta`, and `auto` for anything else
+(`dev`, digest-only pins, third-party registries), which restores the app's own
+heuristic. Setting `DISCVAULT_UPDATE_CHANNEL` yourself always wins.
 
 ## Manual Stack Removal
 

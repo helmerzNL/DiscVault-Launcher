@@ -1,41 +1,71 @@
 name: Stack Image Update Watch
 
+# Unraid can only see updates for the launcher image it installed, not for the
+# child Compose containers the launcher manages. This workflow republishes a
+# launcher channel whenever the DiscVault image that channel tracks changes, so
+# the update shows up in Community Apps.
+#
+# The channel table is .github/channels.json, shared with docker-publish.yml.
+# It used to be a ladder matching github.event.schedule against four literal
+# cron strings, with an else branch that silently fell through to v26-beta --
+# editing a cron string broke the mapping with no error, and :beta was not
+# covered at all.
+
 on:
   schedule:
-    - cron: "7 */4 * * *"
     - cron: "17 */4 * * *"
-    - cron: "47 */4 * * *"
-    - cron: "27 */4 * * *"
   workflow_dispatch:
     inputs:
-      stack_image:
-        description: DiscVault app image to watch.
+      channel:
+        description: Which channel to check.
         required: false
-        default: ghcr.io/helmerznl/discvault:v26-beta
-      launcher_tag:
-        description: Launcher tag to publish when the stack image changes.
-        required: false
-        default: v26-beta
+        default: all
+        type: choice
+        options:
+          - all
+          - latest
+          - beta
       force:
         description: Build even when the stack digest has not changed.
         required: false
         type: boolean
         default: false
 
-concurrency:
-  group: stack-update-watch-${{ github.event.inputs.launcher_tag || github.event.schedule || 'v26-beta' }}
-  cancel-in-progress: false
-
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: helmerznl/discvault-launcher
 
 jobs:
+  channels:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Select channels
+        id: select
+        env:
+          REQUESTED: ${{ github.event.inputs.channel }}
+        run: |
+          set -euo pipefail
+          matrix="$(python3 .github/scripts/select_channels.py)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   publish-on-stack-change:
+    needs: channels
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.channels.outputs.matrix) }}
+
+    concurrency:
+      group: stack-update-watch-${{ matrix.channel }}
+      cancel-in-progress: false
 
     steps:
       - name: Checkout
@@ -51,84 +81,64 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Select watch target
-        id: target
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            if [[ "${{ github.event.schedule }}" == "7 */4 * * *" ]]; then
-              echo "stack_image=ghcr.io/helmerznl/discvault:latest" >> "$GITHUB_OUTPUT"
-              echo "launcher_tag=latest" >> "$GITHUB_OUTPUT"
-            elif [[ "${{ github.event.schedule }}" == "47 */4 * * *" ]]; then
-              echo "stack_image=ghcr.io/helmerznl/discvault:dev" >> "$GITHUB_OUTPUT"
-              echo "launcher_tag=dev" >> "$GITHUB_OUTPUT"
-            elif [[ "${{ github.event.schedule }}" == "27 */4 * * *" ]]; then
-              echo "stack_image=ghcr.io/helmerznl/discvault:v26" >> "$GITHUB_OUTPUT"
-              echo "launcher_tag=v26" >> "$GITHUB_OUTPUT"
-            else
-              echo "stack_image=ghcr.io/helmerznl/discvault:v26-beta" >> "$GITHUB_OUTPUT"
-              echo "launcher_tag=v26-beta" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            echo "stack_image=${{ github.event.inputs.stack_image || 'ghcr.io/helmerznl/discvault:v26-beta' }}" >> "$GITHUB_OUTPUT"
-            echo "launcher_tag=${{ github.event.inputs.launcher_tag || 'v26-beta' }}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Resolve stack digest
         id: digest
-        shell: bash
+        env:
+          STACK_IMAGE: ${{ matrix.stack_image }}
         run: |
           set -euo pipefail
-          stack_image="${{ steps.target.outputs.stack_image }}"
-          digest="$(docker buildx imagetools inspect "$stack_image" --format '{{.Manifest.Digest}}')"
+          digest="$(docker buildx imagetools inspect "$STACK_IMAGE" --format '{{.Manifest.Digest}}')"
           if [[ -z "$digest" || "$digest" == "<nil>" ]]; then
-            echo "Could not resolve manifest digest for $stack_image" >&2
+            echo "Could not resolve manifest digest for $STACK_IMAGE" >&2
             exit 1
           fi
           short="${digest#sha256:}"
-          echo "stack_image=$stack_image" >> "$GITHUB_OUTPUT"
           echo "stack_digest=$digest" >> "$GITHUB_OUTPUT"
           echo "stack_digest_short=${short:0:12}" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether to publish
         id: plan
-        shell: bash
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          LAUNCHER_TAGS: ${{ matrix.tags }}
+          FORCE: ${{ github.event.inputs.force || 'false' }}
+          STACK_IMAGE: ${{ matrix.stack_image }}
+          STACK_DIGEST: ${{ steps.digest.outputs.stack_digest }}
+          DIGEST_SHORT: ${{ steps.digest.outputs.stack_digest_short }}
         run: |
           set -euo pipefail
-          launcher_tag="${{ steps.target.outputs.launcher_tag }}"
-          force="${{ github.event.inputs.force || 'false' }}"
-          current="${{ steps.digest.outputs.stack_digest }}"
-          digest_tag="${REGISTRY}/${IMAGE_NAME}:${launcher_tag}-stack-${{ steps.digest.outputs.stack_digest_short }}"
-          existing_digest_tag=false
+          # The digest tag is the marker: if it already exists, this exact stack
+          # digest has been published for this channel and there is nothing to do.
+          digest_tag="${REGISTRY}/${IMAGE_NAME}:${CHANNEL}-stack-${DIGEST_SHORT}"
+          existing=false
           if docker buildx imagetools inspect "$digest_tag" >/dev/null 2>&1; then
-            existing_digest_tag=true
+            existing=true
           fi
 
           should_publish=false
-          if [[ "$force" == "true" || "$existing_digest_tag" != "true" ]]; then
+          if [[ "$FORCE" == "true" || "$existing" != "true" ]]; then
             should_publish=true
           fi
 
-          echo "launcher_tag=$launcher_tag" >> "$GITHUB_OUTPUT"
           echo "digest_tag=$digest_tag" >> "$GITHUB_OUTPUT"
-          echo "existing_digest_tag=$existing_digest_tag" >> "$GITHUB_OUTPUT"
           echo "should_publish=$should_publish" >> "$GITHUB_OUTPUT"
           {
-            echo "launcher_tags<<EOF"
-            echo "${REGISTRY}/${IMAGE_NAME}:${launcher_tag}"
+            echo "tags<<EOF"
+            for tag in $LAUNCHER_TAGS; do
+              echo "${REGISTRY}/${IMAGE_NAME}:${tag}"
+            done
             echo "$digest_tag"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
           {
-            echo "### Stack update watch"
+            echo "### Stack update watch: \`$CHANNEL\`"
             echo ""
-            echo "- Stack image: \`${{ steps.digest.outputs.stack_image }}\`"
-            echo "- Current digest: \`$current\`"
-            echo "- Launcher tag: \`$launcher_tag\`"
+            echo "- Stack image: \`$STACK_IMAGE\`"
+            echo "- Current digest: \`$STACK_DIGEST\`"
+            echo "- Launcher tags: \`$LAUNCHER_TAGS\`"
             echo "- Digest tag: \`$digest_tag\`"
-            echo "- Existing digest tag: \`$existing_digest_tag\`"
+            echo "- Already published: \`$existing\`"
             echo "- Publish: \`$should_publish\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -139,17 +149,18 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ steps.plan.outputs.launcher_tags }}
+          tags: ${{ steps.plan.outputs.tags }}
           labels: |
             org.opencontainers.image.title=DiscVault Launcher
             org.opencontainers.image.description=Unraid Community Apps launcher for the DiscVault Docker stack.
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            eu.discvault.stack.image=${{ steps.digest.outputs.stack_image }}
+            eu.discvault.launcher.channel=${{ matrix.channel }}
+            eu.discvault.stack.image=${{ matrix.stack_image }}
             eu.discvault.stack.digest=${{ steps.digest.outputs.stack_digest }}
           build-args: |
-            DISCVAULT_STACK_IMAGE=${{ steps.digest.outputs.stack_image }}
+            DISCVAULT_STACK_IMAGE=${{ matrix.stack_image }}
             DISCVAULT_STACK_DIGEST=${{ steps.digest.outputs.stack_digest }}
           platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=launcher-${{ matrix.channel }}
+          cache-to: type=gha,mode=max,scope=launcher-${{ matrix.channel }}

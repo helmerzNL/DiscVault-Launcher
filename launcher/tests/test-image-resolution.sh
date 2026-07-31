@@ -78,6 +78,28 @@ expect_eq 'third-party registry passthrough' \
   'registry.example.com/team/discvault:custom'
 expect_eq 'empty stays empty' "$(resolve_stack_image_alias '')" ''
 
+echo '# update_channel_for_ref'
+
+# The two launcher channels and their deprecated aliases.
+expect_eq ':latest -> stable' "$(update_channel_for_ref "$REPO:latest")" 'stable'
+expect_eq ':v26 -> stable' "$(update_channel_for_ref "$REPO:v26")" 'stable'
+expect_eq ':stable -> stable' "$(update_channel_for_ref "$REPO:stable")" 'stable'
+expect_eq ':beta -> beta' "$(update_channel_for_ref "$REPO:beta")" 'beta'
+expect_eq ':v26-beta -> beta' "$(update_channel_for_ref "$REPO:v26-beta")" 'beta'
+
+# Release snapshots are cut from main, so they are the stable channel.
+expect_eq ':v26.7.7 -> stable' "$(update_channel_for_ref "$REPO:v26.7.7")" 'stable'
+
+# Anything we cannot classify stays "auto", which hands the decision back to
+# the app's own heuristic rather than asserting something we do not know.
+expect_eq ':dev -> auto' "$(update_channel_for_ref "$REPO:dev")" 'auto'
+expect_eq 'untagged ref -> auto' "$(update_channel_for_ref "$REPO")" 'auto'
+expect_eq 'digest-only ref -> auto' "$(update_channel_for_ref "$REPO@sha256:abc")" 'auto'
+expect_eq 'pinned :beta keeps its channel' \
+  "$(update_channel_for_ref "$REPO:beta@sha256:abc")" 'beta'
+expect_eq 'third-party registry -> auto' \
+  "$(update_channel_for_ref 'registry.example.com/team/discvault:latest')" 'auto'
+
 echo '# digest helpers'
 
 expect_eq 'normalize bare digest' "$(normalize_digest abc123)" 'sha256:abc123'
