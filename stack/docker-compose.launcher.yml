@@ -3,17 +3,30 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # The launcher always supplies these, so :? is a safety net rather than a
+      # prompt: it fails loudly instead of letting an empty value reach postgres,
+      # which otherwise crash-loops on "superuser password is not specified" and
+      # only surfaces as an opaque "container is unhealthy".
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in the launcher environment}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in the launcher environment}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the launcher environment}
       TZ: ${TZ}
     volumes:
       - ${DISCVAULT_POSTGRES_DATA_DIR_HOST}:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      # Resolved inside the container, not by Compose on the host, so a missing
+      # host-side variable cannot turn this into an invalid command that fails
+      # forever. Probing TCP instead of the Unix socket keeps the check false
+      # during initdb, when a temporary socket-only server is briefly running.
+      test:
+        - CMD-SHELL
+        - 'pg_isready -h 127.0.0.1 -p 5432 -U "$${POSTGRES_USER:-postgres}" -d "$${POSTGRES_DB:-postgres}"'
       interval: 10s
       timeout: 5s
       retries: 10
+      # First start runs initdb and can be slow on NAS storage. Without this,
+      # early failures mark the container unhealthy and abort the whole `up`.
+      start_period: 120s
     networks:
       - discvault-stack
 
@@ -31,11 +44,15 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       TZ: ${TZ}
       DISCVAULT_LEGACY_DATA_DIR: /data
-      JWT_SECRET: ${JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the launcher environment}
+      DISCVAULT_NEXT_KEY_ENCRYPTION_KEY: ${DISCVAULT_NEXT_KEY_ENCRYPTION_KEY:-}
       RP_ID: ${RP_ID}
       RP_NAME: ${RP_NAME}
       RP_ORIGINS: ${RP_ORIGINS}
+      LEGACY_AUTH_ENABLED: ${LEGACY_AUTH_ENABLED:-false}
+      DISCVAULT_UPDATE_CHANNEL: ${DISCVAULT_UPDATE_CHANNEL:-auto}
       DISCVAULT_NEXT_ENABLE_TEST_RESET: ${DISCVAULT_NEXT_ENABLE_TEST_RESET}
+      DISCVAULT_ADMIN_DEDUP_EXECUTE_ENABLED: ${DISCVAULT_ADMIN_DEDUP_EXECUTE_ENABLED:-false}
     volumes:
       - ${DISCVAULT_DATA_DIR_HOST}:/data
     depends_on:
@@ -52,7 +69,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      # Runs pending migrations before Gunicorn binds. A first start on a fresh
+      # database applies every migration, so keep this generous.
+      start_period: 120s
     networks:
       - discvault-stack
 
@@ -67,11 +86,21 @@ services:
       DISCVAULT_WORKER_ID: ${DISCVAULT_WORKER_ID}
       DISCVAULT_WORKER_POLL_INTERVAL: ${DISCVAULT_WORKER_POLL_INTERVAL}
       DISCVAULT_LEGACY_DATA_DIR: /data
+      # next_worker.main() calls validate_runtime_secrets() before it does
+      # anything else, so the worker needs the same secrets as the API. It must
+      # also share the key-encryption secret, or credentials encrypted by one
+      # process cannot be decrypted by the other.
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the launcher environment}
+      DISCVAULT_NEXT_KEY_ENCRYPTION_KEY: ${DISCVAULT_NEXT_KEY_ENCRYPTION_KEY:-}
     volumes:
       - ${DISCVAULT_DATA_DIR_HOST}:/data
     depends_on:
       next-api:
         condition: service_healthy
+    # The worker has no listener to probe; without this it would report as
+    # having no healthcheck at all rather than deliberately not having one.
+    healthcheck:
+      disable: true
     networks:
       - discvault-stack
 

@@ -1,0 +1,16 @@
+[
+  {
+    "channel": "latest",
+    "description": "Production. Follows DiscVault main.",
+    "stack_image": "ghcr.io/helmerznl/discvault:latest",
+    "launcher_tags": ["latest", "v26"],
+    "deprecated_tags": ["v26"]
+  },
+  {
+    "channel": "beta",
+    "description": "Beta. Follows DiscVault release/v26-beta.",
+    "stack_image": "ghcr.io/helmerznl/discvault:beta",
+    "launcher_tags": ["beta", "v26-beta"],
+    "deprecated_tags": ["v26-beta"]
+  }
+]

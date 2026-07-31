@@ -1,0 +1,59 @@
+name: Launcher Tests
+
+on:
+  push:
+    branches:
+      - main
+      - "release/**"
+      - "claude/**"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: launcher-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: ShellCheck
+        run: |
+          shellcheck --version
+          shellcheck -s sh --severity=warning launcher/*.sh launcher/tests/*.sh
+
+      - name: Channel table tests
+        run: |
+          python3 -m pip install --quiet pyyaml
+          sh launcher/tests/test-channels.sh
+
+      - name: Image resolution tests
+        run: sh launcher/tests/test-image-resolution.sh
+
+      - name: Image resolution tests (busybox ash)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src busybox:1.36 \
+            sh launcher/tests/test-image-resolution.sh
+
+      # Compares against DiscVault's reference stack deployment so a variable
+      # added there cannot silently go unmapped here.
+      # Soft-fails when DiscVault is private to this token; the test then skips
+      # the upstream comparison and still runs the launcher-internal checks.
+      - name: Check out DiscVault for env coverage
+        id: upstream
+        continue-on-error: true
+        uses: actions/checkout@v6
+        with:
+          repository: helmerzNL/DiscVault
+          path: .discvault-upstream
+
+      - name: Env coverage
+        env:
+          DISCVAULT_REPO: ${{ github.workspace }}/.discvault-upstream
+        run: sh launcher/tests/test-env-coverage.sh
+
+      - name: Build launcher image
+        run: docker build -t discvault-launcher:ci .

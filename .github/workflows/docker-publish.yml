@@ -1,39 +1,79 @@
 name: Build & Publish DiscVault Launcher
 
+# Two launcher channels, both built from main:
+#
+#   discvault-launcher:latest  bakes  discvault:latest  (production)
+#   discvault-launcher:beta    bakes  discvault:beta    (beta)
+#
+# The channel table lives in .github/channels.json so this workflow and
+# stack-update-watch.yml cannot drift apart -- which is exactly how the launcher
+# ended up with an orphaned :beta tag that nothing published.
+
 on:
   push:
     branches:
       - main
-      - release/v26-dev
-      - release/v26-beta
-      - release/v26
-    tags:
-      - "v26.*.*"
   workflow_dispatch:
     inputs:
+      channel:
+        description: Which channel to rebuild.
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - latest
+          - beta
       stack_image:
-        description: DiscVault app image baked into the launcher when DISCVAULT_IMAGE=auto.
+        description: Override the DiscVault app image baked into the launcher. Requires a single channel.
         required: false
-        default: ghcr.io/helmerznl/discvault:latest
-      launcher_tag:
-        description: Launcher tag to publish.
-        required: false
-        default: latest
-
-concurrency:
-  group: launcher-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.launcher_tag || github.ref }}
-  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: helmerznl/discvault-launcher
 
 jobs:
+  # Reads the channel table once and hands it to the build matrix, so the build
+  # job itself contains no channel-selection logic.
+  channels:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Select channels
+        id: select
+        env:
+          REQUESTED: ${{ github.event.inputs.channel }}
+          STACK_IMAGE_OVERRIDE: ${{ github.event.inputs.stack_image }}
+        run: |
+          set -euo pipefail
+          matrix="$(python3 .github/scripts/select_channels.py)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Channels to build'
+            echo ''
+            echo '```json'
+            echo "$matrix" | python3 -m json.tool
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build-and-push:
+    needs: channels
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.channels.outputs.matrix) }}
+
+    # Scoped per channel so the two matrix jobs never cancel each other.
+    concurrency:
+      group: launcher-${{ matrix.channel }}-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
       - name: Checkout
@@ -49,61 +89,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Select default stack image
-        id: stack-target
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            image="${{ github.event.inputs.stack_image || 'ghcr.io/helmerznl/discvault:latest' }}"
-          elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            image="ghcr.io/helmerznl/discvault:latest"
-          elif [[ "${GITHUB_REF}" == "refs/heads/release/v26-dev" ]]; then
-            image="ghcr.io/helmerznl/discvault:dev"
-          elif [[ "${GITHUB_REF}" == "refs/heads/release/v26-beta" ]]; then
-            image="ghcr.io/helmerznl/discvault:v26-beta"
-          elif [[ "${GITHUB_REF}" == "refs/heads/release/v26" ]]; then
-            image="ghcr.io/helmerznl/discvault:v26"
-          elif [[ "${GITHUB_REF}" == refs/tags/v26.* ]]; then
-            image="ghcr.io/helmerznl/discvault:${GITHUB_REF_NAME}"
-          else
-            image="ghcr.io/helmerznl/discvault:v26-beta"
-          fi
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve default stack digest
+      - name: Resolve stack digest
         id: stack
-        shell: bash
+        env:
+          STACK_IMAGE: ${{ matrix.stack_image }}
         run: |
           set -euo pipefail
-          stack_image="${{ steps.stack-target.outputs.image }}"
-          digest="$(docker buildx imagetools inspect "$stack_image" --format '{{.Manifest.Digest}}' 2>/dev/null || true)"
+          digest="$(docker buildx imagetools inspect "$STACK_IMAGE" --format '{{.Manifest.Digest}}' 2>/dev/null || true)"
           if [[ -z "$digest" || "$digest" == "<nil>" ]]; then
             digest="unknown"
           fi
-          echo "image=$stack_image" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-            type=raw,value=legacy,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-            type=raw,value=dev,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26-dev' }}
-            type=raw,value=v26-beta,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26-beta' }}
-            type=raw,value=v26,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26' }}
-            type=ref,event=tag,enable=${{ startsWith(github.ref, 'refs/tags/v26.') }}
-            type=raw,value=${{ github.event.inputs.launcher_tag || 'latest' }},enable=${{ github.event_name == 'workflow_dispatch' }}
-          labels: |
-            org.opencontainers.image.title=DiscVault Launcher
-            org.opencontainers.image.description=Unraid Community Apps launcher for the DiscVault Docker stack.
-            org.opencontainers.image.url=https://github.com/${{ github.repository }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            eu.discvault.stack.image=${{ steps.stack.outputs.image }}
-            eu.discvault.stack.digest=${{ steps.stack.outputs.digest }}
+      - name: Build tag list
+        id: tags
+        env:
+          LAUNCHER_TAGS: ${{ matrix.tags }}
+        run: |
+          set -euo pipefail
+          {
+            echo "tags<<EOF"
+            for tag in $LAUNCHER_TAGS; do
+              echo "${REGISTRY}/${IMAGE_NAME}:${tag}"
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v7
@@ -111,11 +121,28 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=DiscVault Launcher
+            org.opencontainers.image.description=Unraid Community Apps launcher for the DiscVault Docker stack.
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            eu.discvault.launcher.channel=${{ matrix.channel }}
+            eu.discvault.stack.image=${{ matrix.stack_image }}
+            eu.discvault.stack.digest=${{ steps.stack.outputs.digest }}
           build-args: |
-            DISCVAULT_STACK_IMAGE=${{ steps.stack.outputs.image }}
+            DISCVAULT_STACK_IMAGE=${{ matrix.stack_image }}
             DISCVAULT_STACK_DIGEST=${{ steps.stack.outputs.digest }}
           platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=launcher-${{ matrix.channel }}
+          cache-to: type=gha,mode=max,scope=launcher-${{ matrix.channel }}
+
+      - name: Summary
+        run: |
+          {
+            echo "### Launcher channel \`${{ matrix.channel }}\`"
+            echo ""
+            echo "- Stack image: \`${{ matrix.stack_image }}\`"
+            echo "- Stack digest: \`${{ steps.stack.outputs.digest }}\`"
+            echo "- Published tags: \`${{ matrix.tags }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
