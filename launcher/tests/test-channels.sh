@@ -246,6 +246,19 @@ print("yes" if value in node.getAttribute("Default").split("|") else f"no ({valu
 PY
 )" 'yes'
 
+expect_eq 'the postgres password resync is off by default' \
+  "$(python3 - "$TEMPLATE" <<'PY'
+import sys, xml.dom.minidom
+doc = xml.dom.minidom.parse(sys.argv[1])
+node = [c for c in doc.getElementsByTagName("Config")
+        if c.getAttribute("Target") == "DISCVAULT_POSTGRES_SYNC_PASSWORD"]
+if not node:
+    print("missing")
+    raise SystemExit
+print((node[0].firstChild.data if node[0].firstChild else "").strip())
+PY
+)" 'false'
+
 expect_eq 'every boolean field is a dropdown' \
   "$(python3 - "$TEMPLATE" <<'PY'
 import sys, xml.dom.minidom

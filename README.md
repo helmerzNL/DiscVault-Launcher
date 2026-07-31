@@ -225,6 +225,29 @@ Clear the variable to resume normal channel updates.
 Do not pin by editing `/config/stack.env` — that file is no longer read for
 image selection, precisely so a forgotten pin cannot freeze the stack.
 
+### "password authentication failed" after moving or reusing appdata
+
+`POSTGRES_PASSWORD` is only read when PostgreSQL initialises its data directory.
+An existing directory keeps whatever password it was created with, and the
+variable is ignored from then on. Point the launcher at such a directory with a
+different password and `next-api` restart-loops on:
+
+```
+psycopg.OperationalError: ... FATAL:  password authentication failed for user "discvault_next"
+```
+
+`pg_isready` does not authenticate, so PostgreSQL still reports healthy and
+Compose only says `dependency failed to start`. The launcher therefore probes
+with a real authenticated connection before starting the rest of the stack, and
+fails with the reason instead. Three ways out:
+
+- Set `POSTGRES_PASSWORD` to the value the directory was initialised with.
+- Set `DISCVAULT_POSTGRES_SYNC_PASSWORD=true` and let the launcher run
+  `ALTER USER` to match its own configuration. Off by default because it writes
+  to your database — do not use it if you restored a backup whose password you
+  still need.
+- Empty the data directory to start over. Destroys the database.
+
 ### First start takes a while
 
 `postgres` and `next-api` both have a 120s healthcheck `start_period`. The first

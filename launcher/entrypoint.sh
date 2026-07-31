@@ -259,6 +259,73 @@ acquire_rollout_lock() {
   log "Acquired rollout lock $ROLLOUT_LOCK_DIR with pid $$"
 }
 
+# Ask PostgreSQL whether the credentials the launcher hands out actually work.
+#
+# The stack healthcheck cannot answer this: pg_isready reports that the server
+# responded, including when the response is an authentication error. So a data
+# directory initialised with a different password leaves postgres "healthy"
+# while next-api restart-loops on "password authentication failed", and Compose
+# reports only "dependency failed to start".
+#
+# The password goes in over stdin rather than as an argument, so it never
+# appears in the launcher's process list or in docker's own logging.
+postgres_probe() {
+  pg_id="$1"
+  printf '%s\n' "$POSTGRES_PASSWORD" | docker exec -i "$pg_id" sh -c '
+    read -r pw
+    PGPASSWORD="$pw" exec psql -h 127.0.0.1 -p 5432 -U "$1" -d "$2" -tAc "select 1"
+  ' _ "$POSTGRES_USER" "$POSTGRES_DB" 2>&1
+}
+
+sync_postgres_password() {
+  pg_id="$1"
+  # The official image trusts local superuser connections, so the launcher can
+  # set the password without knowing the old one.
+  escaped="$(printf '%s' "$POSTGRES_PASSWORD" | sed "s/'/''/g")"
+  printf "ALTER USER \"%s\" WITH PASSWORD '%s';\n" "$POSTGRES_USER" "$escaped" \
+    | docker exec -i "$pg_id" psql -U postgres -v ON_ERROR_STOP=1 >/dev/null 2>&1
+}
+
+verify_postgres_credentials() {
+  attempts="${DISCVAULT_POSTGRES_PROBE_ATTEMPTS:-12}"
+  interval="${DISCVAULT_POSTGRES_PROBE_INTERVAL:-5}"
+  attempt=1
+  probe_output=""
+
+  while [ "$attempt" -le "$attempts" ]; do
+    pg_id="$(running_service_container_ids postgres | head -n 1)"
+    if [ -n "$pg_id" ]; then
+      if probe_output="$(postgres_probe "$pg_id")"; then
+        log "PostgreSQL accepted the configured credentials for user $POSTGRES_USER"
+        return 0
+      fi
+
+      # Quote PostgreSQL's own words: it is the same message that shows up in
+      # next-api's traceback, which is where operators meet this first.
+      probe_summary="$(printf '%s' "$probe_output" | tr '\n' ' ')"
+
+      case "$probe_output" in
+        *"authentication failed"*|*"no password supplied"*|*"role \"$POSTGRES_USER\" does not exist"*)
+          if [ "$SYNC_POSTGRES_PASSWORD" = "true" ]; then
+            log "DISCVAULT_POSTGRES_SYNC_PASSWORD=true; resynchronising the PostgreSQL password for user $POSTGRES_USER"
+            if sync_postgres_password "$pg_id"; then
+              log "Resynchronised the PostgreSQL password for user $POSTGRES_USER from the launcher configuration"
+              return 0
+            fi
+            fail "Could not resynchronise the PostgreSQL password for user $POSTGRES_USER. Set POSTGRES_PASSWORD to the value $POSTGRES_DATA_DIR was initialised with, or empty that directory to start over."
+          fi
+          fail "PostgreSQL rejected the configured credentials for user $POSTGRES_USER: $probe_summary -- POSTGRES_PASSWORD only applies when the data directory is first initialised, so $POSTGRES_DATA_DIR was created with a different password. Either set POSTGRES_PASSWORD to that original value, set DISCVAULT_POSTGRES_SYNC_PASSWORD=true to let the launcher run ALTER USER for you, or empty the data directory to start over."
+          ;;
+      esac
+    fi
+
+    attempt=$((attempt + 1))
+    [ "$attempt" -le "$attempts" ] && sleep "$interval"
+  done
+
+  fail "PostgreSQL did not accept connections after $attempts attempts; last probe reported: $probe_output"
+}
+
 verify_stack_after_deploy() {
   desired_digest="$1"
   desired_repo="$2"
@@ -321,6 +388,14 @@ PACKAGED_STACK_DIGEST="${DISCVAULT_LAUNCHER_STACK_DIGEST:-}"
 FORCE_RECREATE_ON_PULL="${DISCVAULT_FORCE_RECREATE_ON_PULL:-true}"
 ALWAYS_RECREATE_STACK="${DISCVAULT_ALWAYS_RECREATE_STACK:-false}"
 CHECK_HEALTH_SHA="${DISCVAULT_CHECK_HEALTH_SHA:-true}"
+SYNC_POSTGRES_PASSWORD="${DISCVAULT_POSTGRES_SYNC_PASSWORD:-false}"
+POSTGRES_DATA_DIR="${DISCVAULT_POSTGRES_DATA_DIR_HOST:-/mnt/user/appdata/discvault-postgres}"
+
+# Overridable so the rollout can be exercised outside the image; the defaults are
+# the paths the Dockerfile installs to.
+COMPOSE_TEMPLATE="${DISCVAULT_LAUNCHER_COMPOSE_TEMPLATE:-/opt/discvault-launcher/docker-compose.yml}"
+NGINX_TEMPLATE="${DISCVAULT_LAUNCHER_NGINX_TEMPLATE:-/opt/discvault-launcher/nginx.conf.template}"
+NGINX_CONF="${DISCVAULT_LAUNCHER_NGINX_CONF:-/etc/nginx/http.d/default.conf}"
 
 mkdir -p "$CONFIG_DIR"
 touch "$ENV_FILE"
@@ -509,6 +584,7 @@ log_env_snapshot \
   DISCVAULT_FORCE_RECREATE_ON_PULL \
   DISCVAULT_ALWAYS_RECREATE_STACK \
   DISCVAULT_CHECK_HEALTH_SHA \
+  DISCVAULT_POSTGRES_SYNC_PASSWORD \
   DISCVAULT_BOOT_LOG_RETENTION \
   DISCVAULT_ROLLOUT_LOCK_TIMEOUT \
   DISCVAULT_DATA_DIR_HOST \
@@ -558,7 +634,7 @@ awk -v mcp_ports="$DISCVAULT_MCP_PORTS" '{
   } else {
     print
   }
-}' /opt/discvault-launcher/docker-compose.yml > "$COMPOSE_FILE"
+}' "$COMPOSE_TEMPLATE" > "$COMPOSE_FILE"
 DISCVAULT_MCP_LOCATIONS='    location = /mcp-health {
         proxy_pass http://next-mcp:6090/health;
         proxy_http_version 1.1;
@@ -590,7 +666,7 @@ awk -v mcp_locations="$DISCVAULT_MCP_LOCATIONS" '{
   } else {
     print
   }
-}' /opt/discvault-launcher/nginx.conf.template > /etc/nginx/http.d/default.conf
+}' "$NGINX_TEMPLATE" > "$NGINX_CONF"
 
 log "Ensuring Docker network $NETWORK_NAME exists"
 docker network create "$NETWORK_NAME" >/dev/null 2>&1 || true
@@ -646,6 +722,9 @@ if [ "$STACK_IMAGE_AFTER_DIGEST" != "$DESIRED_DIGEST" ]; then
 fi
 
 UP_ARGS="-d --remove-orphans"
+# No --remove-orphans while only postgres is named, so the phase cannot be
+# mistaken for "these are the only services in the project".
+POSTGRES_UP_ARGS="-d"
 FORCE_RECREATE_REASON=""
 if [ "$ALWAYS_RECREATE_STACK" = "true" ]; then
   FORCE_RECREATE_REASON="DISCVAULT_ALWAYS_RECREATE_STACK=true"
@@ -660,6 +739,7 @@ fi
 if [ -n "$FORCE_RECREATE_REASON" ]; then
   log "$FORCE_RECREATE_REASON; forcing stack recreate"
   UP_ARGS="-d --remove-orphans --force-recreate"
+  POSTGRES_UP_ARGS="-d --force-recreate"
 fi
 
 require_secret_reaches_compose POSTGRES_PASSWORD
@@ -667,8 +747,17 @@ require_secret_reaches_compose JWT_SECRET
 log "Verified stack secrets reach Compose from both $COMPOSE_ENV_FILE and the process environment"
 
 log "Starting or updating DiscVault stack project $PROJECT_NAME"
-log "DiscVault compose services: $COMPOSE_UP_SERVICES"
+
+# Postgres first, on its own. The rest of the stack depends on it being healthy,
+# so a `up` naming everything blocks on next-api and fails there -- long after
+# the point where a credential problem could still be reported clearly.
+log "Starting PostgreSQL before the rest of the stack so credentials can be verified"
 # Both variables hold space-separated argument lists, so the splitting is wanted.
+# shellcheck disable=SC2086
+docker compose --env-file "$COMPOSE_ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up $POSTGRES_UP_ARGS postgres
+verify_postgres_credentials
+
+log "DiscVault compose services: $COMPOSE_UP_SERVICES"
 # shellcheck disable=SC2086
 docker compose --env-file "$COMPOSE_ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up $UP_ARGS $COMPOSE_UP_SERVICES
 
