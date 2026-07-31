@@ -1,0 +1,100 @@
+#!/bin/sh
+#
+# Scriptable `docker` stub for the rollout tests.
+#
+# Every invocation is appended to $STUB_LOG so a test can assert on the order and
+# shape of the calls the entrypoint makes. Behaviour is steered by environment
+# variables so one stub covers every scenario:
+#
+#   STUB_DIGEST          manifest/repo digest to report (default a fixed sha256)
+#   STUB_PSQL            ok | auth-failed | unreachable   (default ok)
+#   STUB_ALTER_USER      ok | fail                        (default ok)
+#   STUB_RUNNING         space-separated services that already have a container
+#
+# It deliberately does not try to be a faithful docker: it answers just enough
+# for the entrypoint to make its decisions.
+
+set -eu
+
+STUB_LOG="${STUB_LOG:-/dev/null}"
+DIGEST="${STUB_DIGEST:-sha256:1111111111111111111111111111111111111111111111111111111111111111}"
+REPO='ghcr.io/helmerznl/discvault'
+
+printf '%s\n' "docker $*" >> "$STUB_LOG"
+
+case "$1 ${2:-}" in
+  "buildx imagetools")
+    # $4 is the ref for `buildx imagetools inspect <ref> --format ...`
+    case "${4:-}" in
+      "$REPO":*|"$REPO"@*) printf '%s\n' "$DIGEST"; exit 0 ;;
+      *) echo "ERROR: ${4:-} not found" >&2; exit 1 ;;
+    esac
+    ;;
+
+  "image inspect")
+    case "$*" in
+      *RepoDigests*) printf '%s\n' "$REPO@$DIGEST"; exit 0 ;;
+      *revision*) printf '%s\n' 'stubrevision'; exit 0 ;;
+      *) printf '%s\n' 'sha256:stubimageid'; exit 0 ;;
+    esac
+    ;;
+
+  "network create"|"network connect") exit 0 ;;
+  "pull "*) printf 'Status: Image is up to date for %s\n' "${2:-}"; exit 0 ;;
+  "inspect "*) printf '%s\n' 'sha256:stubimageid'; exit 0 ;;
+
+  "ps "*)
+    # Report a container id for services listed in STUB_RUNNING.
+    for arg in "$@"; do
+      case "$arg" in
+        label=com.docker.compose.service=*)
+          svc="${arg#label=com.docker.compose.service=}"
+          for running in ${STUB_RUNNING:-postgres next-api next-worker next-mcp}; do
+            [ "$running" = "$svc" ] && { printf '%s\n' "container-$svc"; exit 0; }
+          done
+          exit 0
+          ;;
+      esac
+    done
+    exit 0
+    ;;
+
+  "exec "*)
+    # The credential probe and the optional ALTER USER both arrive here, and
+    # both deliberately pass their secret over stdin rather than in argv, so the
+    # SQL has to be read from stdin to tell them apart.
+    stdin_payload=''
+    case "$*" in
+      *" -i "*) stdin_payload="$(cat)" ;;
+    esac
+    # Record the statement kind, never the payload: the probe sends the password
+    # on stdin, and the log is asserted on for the absence of secrets.
+    case "$stdin_payload" in
+      *"ALTER USER"*) printf '%s\n' 'exec-sql: ALTER USER' >> "$STUB_LOG" ;;
+    esac
+    case "$stdin_payload $*" in
+      *"ALTER USER"*)
+        [ "${STUB_ALTER_USER:-ok}" = ok ] && { echo 'ALTER ROLE'; exit 0; }
+        echo 'ERROR: permission denied' >&2; exit 1
+        ;;
+      *psql*)
+        case "${STUB_PSQL:-ok}" in
+          ok) echo ' ?column? '; echo '        1'; exit 0 ;;
+          auth-failed)
+            echo 'psql: error: connection to server failed: FATAL:  password authentication failed for user "discvault_next"' >&2
+            exit 2
+            ;;
+          unreachable)
+            echo 'psql: error: could not connect to server: Connection refused' >&2
+            exit 2
+            ;;
+        esac
+        ;;
+    esac
+    exit 0
+    ;;
+
+  "compose "*) exit 0 ;;
+esac
+
+exit 0

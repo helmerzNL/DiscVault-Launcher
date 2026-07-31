@@ -35,11 +35,46 @@ fail() {
 }
 
 random_secret() {
-  openssl rand -hex 32
+  openssl rand -hex 32 2>/dev/null || true
+}
+
+# Take the secret from the environment, keep the one already generated, or make
+# a new one -- and refuse to persist an empty value.
+#
+# The generation used to sit inside a command substitution, where `fail` would
+# only have exited that subshell. An openssl that produced nothing therefore
+# wrote an empty secret to stack.env and the boot ended on "Required launcher
+# env POSTGRES_PASSWORD is empty", which says nothing about the actual cause.
+ensure_stack_secret() {
+  key="$1"
+  provided="$2"
+
+  if [ -n "$provided" ]; then
+    set_env "$key" "$provided" "$ENV_FILE"
+    return 0
+  fi
+
+  if [ -n "$(env_file_value "$key" "$ENV_FILE")" ]; then
+    return 0
+  fi
+
+  generated="$(random_secret)"
+  if [ -z "$generated" ]; then
+    fail "Cannot generate $key: openssl produced no output. Install openssl in the launcher image, or set $key explicitly in the launcher environment."
+  fi
+  set_env "$key" "$generated" "$ENV_FILE"
+  log "Generated a new $key and stored it in $ENV_FILE"
 }
 
 image_id() {
   docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true
+}
+
+# True when the reference names something the registry can actually serve.
+# A digest-pinned ref carries its own answer and needs no lookup.
+stack_image_is_resolvable() {
+  is_digest_pinned_ref "$1" && return 0
+  [ -n "$(remote_digest_for_ref "$1" || true)" ]
 }
 
 remote_digest_for_ref() {
@@ -259,6 +294,73 @@ acquire_rollout_lock() {
   log "Acquired rollout lock $ROLLOUT_LOCK_DIR with pid $$"
 }
 
+# Ask PostgreSQL whether the credentials the launcher hands out actually work.
+#
+# The stack healthcheck cannot answer this: pg_isready reports that the server
+# responded, including when the response is an authentication error. So a data
+# directory initialised with a different password leaves postgres "healthy"
+# while next-api restart-loops on "password authentication failed", and Compose
+# reports only "dependency failed to start".
+#
+# The password goes in over stdin rather than as an argument, so it never
+# appears in the launcher's process list or in docker's own logging.
+postgres_probe() {
+  pg_id="$1"
+  printf '%s\n' "$POSTGRES_PASSWORD" | docker exec -i "$pg_id" sh -c '
+    read -r pw
+    PGPASSWORD="$pw" exec psql -h 127.0.0.1 -p 5432 -U "$1" -d "$2" -tAc "select 1"
+  ' _ "$POSTGRES_USER" "$POSTGRES_DB" 2>&1
+}
+
+sync_postgres_password() {
+  pg_id="$1"
+  # The official image trusts local superuser connections, so the launcher can
+  # set the password without knowing the old one.
+  escaped="$(printf '%s' "$POSTGRES_PASSWORD" | sed "s/'/''/g")"
+  printf "ALTER USER \"%s\" WITH PASSWORD '%s';\n" "$POSTGRES_USER" "$escaped" \
+    | docker exec -i "$pg_id" psql -U postgres -v ON_ERROR_STOP=1 >/dev/null 2>&1
+}
+
+verify_postgres_credentials() {
+  attempts="${DISCVAULT_POSTGRES_PROBE_ATTEMPTS:-12}"
+  interval="${DISCVAULT_POSTGRES_PROBE_INTERVAL:-5}"
+  attempt=1
+  probe_output=""
+
+  while [ "$attempt" -le "$attempts" ]; do
+    pg_id="$(running_service_container_ids postgres | head -n 1)"
+    if [ -n "$pg_id" ]; then
+      if probe_output="$(postgres_probe "$pg_id")"; then
+        log "PostgreSQL accepted the configured credentials for user $POSTGRES_USER"
+        return 0
+      fi
+
+      # Quote PostgreSQL's own words: it is the same message that shows up in
+      # next-api's traceback, which is where operators meet this first.
+      probe_summary="$(printf '%s' "$probe_output" | tr '\n' ' ')"
+
+      case "$probe_output" in
+        *"authentication failed"*|*"no password supplied"*|*"role \"$POSTGRES_USER\" does not exist"*)
+          if [ "$SYNC_POSTGRES_PASSWORD" = "true" ]; then
+            log "DISCVAULT_POSTGRES_SYNC_PASSWORD=true; resynchronising the PostgreSQL password for user $POSTGRES_USER"
+            if sync_postgres_password "$pg_id"; then
+              log "Resynchronised the PostgreSQL password for user $POSTGRES_USER from the launcher configuration"
+              return 0
+            fi
+            fail "Could not resynchronise the PostgreSQL password for user $POSTGRES_USER. Set POSTGRES_PASSWORD to the value $POSTGRES_DATA_DIR was initialised with, or empty that directory to start over."
+          fi
+          fail "PostgreSQL rejected the configured credentials for user $POSTGRES_USER: $probe_summary -- POSTGRES_PASSWORD only applies when the data directory is first initialised, so $POSTGRES_DATA_DIR was created with a different password. Either set POSTGRES_PASSWORD to that original value, set DISCVAULT_POSTGRES_SYNC_PASSWORD=true to let the launcher run ALTER USER for you, or empty the data directory to start over."
+          ;;
+      esac
+    fi
+
+    attempt=$((attempt + 1))
+    [ "$attempt" -le "$attempts" ] && sleep "$interval"
+  done
+
+  fail "PostgreSQL did not accept connections after $attempts attempts; last probe reported: $probe_output"
+}
+
 verify_stack_after_deploy() {
   desired_digest="$1"
   desired_repo="$2"
@@ -321,6 +423,14 @@ PACKAGED_STACK_DIGEST="${DISCVAULT_LAUNCHER_STACK_DIGEST:-}"
 FORCE_RECREATE_ON_PULL="${DISCVAULT_FORCE_RECREATE_ON_PULL:-true}"
 ALWAYS_RECREATE_STACK="${DISCVAULT_ALWAYS_RECREATE_STACK:-false}"
 CHECK_HEALTH_SHA="${DISCVAULT_CHECK_HEALTH_SHA:-true}"
+SYNC_POSTGRES_PASSWORD="${DISCVAULT_POSTGRES_SYNC_PASSWORD:-false}"
+POSTGRES_DATA_DIR="${DISCVAULT_POSTGRES_DATA_DIR_HOST:-/mnt/user/appdata/discvault-postgres}"
+
+# Overridable so the rollout can be exercised outside the image; the defaults are
+# the paths the Dockerfile installs to.
+COMPOSE_TEMPLATE="${DISCVAULT_LAUNCHER_COMPOSE_TEMPLATE:-/opt/discvault-launcher/docker-compose.yml}"
+NGINX_TEMPLATE="${DISCVAULT_LAUNCHER_NGINX_TEMPLATE:-/opt/discvault-launcher/nginx.conf.template}"
+NGINX_CONF="${DISCVAULT_LAUNCHER_NGINX_CONF:-/etc/nginx/http.d/default.conf}"
 
 mkdir -p "$CONFIG_DIR"
 touch "$ENV_FILE"
@@ -346,49 +456,70 @@ log_ignored_stored_override() {
   fi
 }
 
-# The container environment wins over anything persisted in stack.env. Both
-# variables are always defined by the launcher image, so an empty value means
-# "no override" rather than "fall back to the stored value". Without this, an
-# override written to stack.env once -- for example the digest pin the README
-# used to recommend -- could never be cleared from the Unraid UI again, and the
-# stack stayed frozen on that image forever.
-resolve_configured_image_var DISCVAULT_NEXT_IMAGE "$ENV_FILE"
-NEXT_IMAGE_SOURCE="$CONFIGURED_IMAGE_SOURCE"
-configured_next_image_raw="$CONFIGURED_IMAGE_VALUE"
-log_ignored_stored_override DISCVAULT_NEXT_IMAGE "$NEXT_IMAGE_SOURCE" "$configured_next_image_raw"
-
+# DISCVAULT_IMAGE is read from the container environment, never from stack.env
+# unless the variable is absent entirely. The launcher image always defines it,
+# so an empty field means "no value" rather than "reuse the stored one" --
+# otherwise a value written once could never be cleared from the Unraid UI, and
+# the stack stayed frozen on it.
 resolve_configured_image_var DISCVAULT_IMAGE "$ENV_FILE"
 IMAGE_SOURCE="$CONFIGURED_IMAGE_SOURCE"
 configured_image_raw="$CONFIGURED_IMAGE_VALUE"
 log_ignored_stored_override DISCVAULT_IMAGE "$IMAGE_SOURCE" "$configured_image_raw"
 
-configured_next_image="$(resolve_stack_image_alias "$configured_next_image_raw")"
-configured_image="$(resolve_stack_image_alias "$configured_image_raw")"
-
-# The Unraid channel dropdown. It sits below the explicit image overrides so a
-# digest pin still wins, and above the packaged default so switching the
-# dropdown works without also changing the launcher repository.
-CONFIGURED_CHANNEL="${DISCVAULT_CHANNEL:-}"
-CHANNEL_STACK_IMAGE=""
-if [ -n "$CONFIGURED_CHANNEL" ] && [ "$CONFIGURED_CHANNEL" != "auto" ]; then
-  CHANNEL_STACK_IMAGE="$(stack_image_for_channel "$CONFIGURED_CHANNEL")"
-  if [ -z "$CHANNEL_STACK_IMAGE" ]; then
-    log "WARNING: Unknown DISCVAULT_CHANNEL=$CONFIGURED_CHANNEL; expected latest or beta. Falling back to the launcher's packaged channel."
-  fi
+# DISCVAULT_NEXT_IMAGE was a third way to say the same thing. Ignoring it
+# silently would move a pinned install onto a channel default without warning.
+if [ -n "${DISCVAULT_NEXT_IMAGE:-}" ]; then
+  log "WARNING: DISCVAULT_NEXT_IMAGE=${DISCVAULT_NEXT_IMAGE} is no longer used and is being ignored. Set DISCVAULT_CHANNEL=manual and put the reference in DISCVAULT_IMAGE instead."
 fi
 
-if [ -n "$configured_next_image_raw" ] && [ "$configured_next_image_raw" != "auto" ]; then
-  STACK_IMAGE="$configured_next_image"
-  STACK_IMAGE_SOURCE="DISCVAULT_NEXT_IMAGE"
-elif [ -n "$configured_image_raw" ] && [ "$configured_image_raw" != "auto" ]; then
-  STACK_IMAGE="$configured_image"
-  STACK_IMAGE_SOURCE="DISCVAULT_IMAGE"
-elif [ -n "$CHANNEL_STACK_IMAGE" ]; then
-  STACK_IMAGE="$CHANNEL_STACK_IMAGE"
-  STACK_IMAGE_SOURCE="DISCVAULT_CHANNEL=$CONFIGURED_CHANNEL"
-else
-  STACK_IMAGE="${PACKAGED_STACK_IMAGE:-ghcr.io/helmerznl/discvault:latest}"
-  STACK_IMAGE_SOURCE="packaged-default"
+DEFAULT_STACK_IMAGE="$DISCVAULT_IMAGE_REPO:latest"
+
+# One control, four positions:
+#   auto    follow the channel baked into this launcher image
+#   latest  production
+#   beta    beta
+#   manual  whatever DISCVAULT_IMAGE says
+CONFIGURED_CHANNEL="${DISCVAULT_CHANNEL:-auto}"
+case "$CONFIGURED_CHANNEL" in
+  auto|latest|beta|manual) ;;
+  '')
+    CONFIGURED_CHANNEL=auto
+    ;;
+  *)
+    log "WARNING: Unknown DISCVAULT_CHANNEL=$CONFIGURED_CHANNEL; expected auto, latest, beta or manual. Continuing as auto."
+    CONFIGURED_CHANNEL=auto
+    ;;
+esac
+
+case "$CONFIGURED_CHANNEL" in
+  manual)
+    manual_ref="$(resolve_stack_image_alias "$configured_image_raw")"
+    if [ -z "$manual_ref" ]; then
+      log "WARNING: DISCVAULT_CHANNEL=manual but DISCVAULT_IMAGE is empty; deploying $DEFAULT_STACK_IMAGE instead."
+      STACK_IMAGE="$DEFAULT_STACK_IMAGE"
+      STACK_IMAGE_SOURCE="manual-empty-fallback-latest"
+    elif stack_image_is_resolvable "$manual_ref"; then
+      STACK_IMAGE="$manual_ref"
+      STACK_IMAGE_SOURCE="DISCVAULT_CHANNEL=manual"
+    else
+      # A typo in a free-text field should not take the whole app offline.
+      log "WARNING: DISCVAULT_IMAGE=$configured_image_raw resolves to $manual_ref, which does not exist in the registry; deploying $DEFAULT_STACK_IMAGE instead."
+      STACK_IMAGE="$DEFAULT_STACK_IMAGE"
+      STACK_IMAGE_SOURCE="manual-unresolvable-fallback-latest"
+    fi
+    ;;
+  latest|beta)
+    STACK_IMAGE="$(stack_image_for_channel "$CONFIGURED_CHANNEL")"
+    STACK_IMAGE_SOURCE="DISCVAULT_CHANNEL=$CONFIGURED_CHANNEL"
+    ;;
+  *)
+    STACK_IMAGE="${PACKAGED_STACK_IMAGE:-$DEFAULT_STACK_IMAGE}"
+    STACK_IMAGE_SOURCE="DISCVAULT_CHANNEL=auto (launcher packaged channel)"
+    ;;
+esac
+
+if [ "$CONFIGURED_CHANNEL" != "manual" ] && [ -n "$configured_image_raw" ] && [ "$configured_image_raw" != "auto" ]; then
+  log "Ignoring DISCVAULT_IMAGE=$configured_image_raw; it only applies when DISCVAULT_CHANNEL=manual (currently $CONFIGURED_CHANNEL)."
 fi
 
 if [ -z "$STACK_IMAGE" ]; then
@@ -396,9 +527,6 @@ if [ -z "$STACK_IMAGE" ]; then
 fi
 
 export DISCVAULT_IMAGE="$STACK_IMAGE"
-if [ -n "$configured_next_image_raw" ]; then
-  export DISCVAULT_NEXT_IMAGE="$configured_next_image"
-fi
 
 # Legacy single-container mode was removed: DiscVault dropped app/Dockerfile and
 # now builds every channel -- including :latest -- from app/Dockerfile.v26, so
@@ -418,7 +546,6 @@ esac
 set_env TZ "${TZ:-Europe/Amsterdam}" "$ENV_FILE"
 set_env DISCVAULT_CHANNEL "$CONFIGURED_CHANNEL" "$ENV_FILE"
 set_env DISCVAULT_IMAGE "${configured_image_raw:-auto}" "$ENV_FILE"
-set_env DISCVAULT_NEXT_IMAGE "$configured_next_image_raw" "$ENV_FILE"
 set_env DISCVAULT_DATA_DIR_HOST "${DISCVAULT_DATA_DIR_HOST:-/mnt/user/appdata/discvault}" "$ENV_FILE"
 set_env DISCVAULT_POSTGRES_DATA_DIR_HOST "${DISCVAULT_POSTGRES_DATA_DIR_HOST:-/mnt/user/appdata/discvault-postgres}" "$ENV_FILE"
 set_env DISCVAULT_NETWORK "$NETWORK_NAME" "$ENV_FILE"
@@ -456,17 +583,8 @@ set_env DISCVAULT_ADMIN_DEDUP_EXECUTE_ENABLED "${DISCVAULT_ADMIN_DEDUP_EXECUTE_E
 # that existing installs already encrypted under JWT_SECRET undecryptable.
 set_env DISCVAULT_NEXT_KEY_ENCRYPTION_KEY "${DISCVAULT_NEXT_KEY_ENCRYPTION_KEY:-}" "$ENV_FILE"
 
-if [ -n "${POSTGRES_PASSWORD:-}" ]; then
-  set_env POSTGRES_PASSWORD "$POSTGRES_PASSWORD" "$ENV_FILE"
-else
-  ensure_non_empty_env POSTGRES_PASSWORD "$(random_secret)" "$ENV_FILE"
-fi
-
-if [ -n "${JWT_SECRET:-}" ]; then
-  set_env JWT_SECRET "$JWT_SECRET" "$ENV_FILE"
-else
-  ensure_non_empty_env JWT_SECRET "$(random_secret)" "$ENV_FILE"
-fi
+ensure_stack_secret POSTGRES_PASSWORD "${POSTGRES_PASSWORD:-}"
+ensure_stack_secret JWT_SECRET "${JWT_SECRET:-}"
 require_non_empty_env POSTGRES_PASSWORD "$ENV_FILE"
 require_non_empty_env JWT_SECRET "$ENV_FILE"
 log "Verified launcher secrets are present in $ENV_FILE"
@@ -474,7 +592,6 @@ log "Verified launcher secrets are present in $ENV_FILE"
 for key in \
   TZ \
   DISCVAULT_IMAGE \
-  DISCVAULT_NEXT_IMAGE \
   DISCVAULT_DATA_DIR_HOST \
   DISCVAULT_POSTGRES_DATA_DIR_HOST \
   DISCVAULT_NETWORK \
@@ -503,12 +620,12 @@ done
 log "Exported launcher env file values for Docker Compose"
 log_env_snapshot \
   DISCVAULT_CHANNEL \
-  DISCVAULT_NEXT_IMAGE \
   DISCVAULT_IMAGE \
   DISCVAULT_DEPLOYMENT_MODE \
   DISCVAULT_FORCE_RECREATE_ON_PULL \
   DISCVAULT_ALWAYS_RECREATE_STACK \
   DISCVAULT_CHECK_HEALTH_SHA \
+  DISCVAULT_POSTGRES_SYNC_PASSWORD \
   DISCVAULT_BOOT_LOG_RETENTION \
   DISCVAULT_ROLLOUT_LOCK_TIMEOUT \
   DISCVAULT_DATA_DIR_HOST \
@@ -532,15 +649,9 @@ log_env_snapshot \
 # Compose interpolation prefers the process environment over --env-file.
 # Re-apply the resolved image ref here so service images never fall back to "auto".
 export DISCVAULT_IMAGE="$STACK_IMAGE"
-if [ -n "$configured_next_image_raw" ]; then
-  export DISCVAULT_NEXT_IMAGE="$configured_next_image"
-fi
 
 cp "$ENV_FILE" "$COMPOSE_ENV_FILE"
 set_env DISCVAULT_IMAGE "$STACK_IMAGE" "$COMPOSE_ENV_FILE"
-if [ -n "$configured_next_image_raw" ]; then
-  set_env DISCVAULT_NEXT_IMAGE "$configured_next_image" "$COMPOSE_ENV_FILE"
-fi
 log "Prepared compose env file $COMPOSE_ENV_FILE with resolved DISCVAULT_IMAGE=$STACK_IMAGE"
 
 COMPOSE_UP_SERVICES="postgres next-api next-worker next-mcp"
@@ -558,7 +669,7 @@ awk -v mcp_ports="$DISCVAULT_MCP_PORTS" '{
   } else {
     print
   }
-}' /opt/discvault-launcher/docker-compose.yml > "$COMPOSE_FILE"
+}' "$COMPOSE_TEMPLATE" > "$COMPOSE_FILE"
 DISCVAULT_MCP_LOCATIONS='    location = /mcp-health {
         proxy_pass http://next-mcp:6090/health;
         proxy_http_version 1.1;
@@ -590,7 +701,7 @@ awk -v mcp_locations="$DISCVAULT_MCP_LOCATIONS" '{
   } else {
     print
   }
-}' /opt/discvault-launcher/nginx.conf.template > /etc/nginx/http.d/default.conf
+}' "$NGINX_TEMPLATE" > "$NGINX_CONF"
 
 log "Ensuring Docker network $NETWORK_NAME exists"
 docker network create "$NETWORK_NAME" >/dev/null 2>&1 || true
@@ -614,7 +725,7 @@ fi
 STACK_IMAGE_REPO="$(image_repo_from_ref "$STACK_IMAGE")"
 
 LAST_STACK_DIGEST="$(cat "$LAST_STACK_DIGEST_FILE" 2>/dev/null || true)"
-log "DiscVault image selection source=$STACK_IMAGE_SOURCE configured_next_image=${configured_next_image_raw:-<empty>} (from $NEXT_IMAGE_SOURCE) configured_image=${configured_image_raw:-<empty>} (from $IMAGE_SOURCE) resolved_ref=$STACK_IMAGE repo=$STACK_IMAGE_REPO"
+log "DiscVault image selection channel=$CONFIGURED_CHANNEL source=$STACK_IMAGE_SOURCE configured_image=${configured_image_raw:-<empty>} (from $IMAGE_SOURCE) resolved_ref=$STACK_IMAGE repo=$STACK_IMAGE_REPO"
 log "DiscVault desired digest source=$DESIRED_DIGEST_SOURCE desired_digest=$DESIRED_DIGEST"
 log "DiscVault metadata digests packaged=${PACKAGED_STACK_DIGEST:-none} last_applied=${LAST_STACK_DIGEST:-none}"
 
@@ -646,6 +757,9 @@ if [ "$STACK_IMAGE_AFTER_DIGEST" != "$DESIRED_DIGEST" ]; then
 fi
 
 UP_ARGS="-d --remove-orphans"
+# No --remove-orphans while only postgres is named, so the phase cannot be
+# mistaken for "these are the only services in the project".
+POSTGRES_UP_ARGS="-d"
 FORCE_RECREATE_REASON=""
 if [ "$ALWAYS_RECREATE_STACK" = "true" ]; then
   FORCE_RECREATE_REASON="DISCVAULT_ALWAYS_RECREATE_STACK=true"
@@ -660,6 +774,7 @@ fi
 if [ -n "$FORCE_RECREATE_REASON" ]; then
   log "$FORCE_RECREATE_REASON; forcing stack recreate"
   UP_ARGS="-d --remove-orphans --force-recreate"
+  POSTGRES_UP_ARGS="-d --force-recreate"
 fi
 
 require_secret_reaches_compose POSTGRES_PASSWORD
@@ -667,8 +782,17 @@ require_secret_reaches_compose JWT_SECRET
 log "Verified stack secrets reach Compose from both $COMPOSE_ENV_FILE and the process environment"
 
 log "Starting or updating DiscVault stack project $PROJECT_NAME"
-log "DiscVault compose services: $COMPOSE_UP_SERVICES"
+
+# Postgres first, on its own. The rest of the stack depends on it being healthy,
+# so a `up` naming everything blocks on next-api and fails there -- long after
+# the point where a credential problem could still be reported clearly.
+log "Starting PostgreSQL before the rest of the stack so credentials can be verified"
 # Both variables hold space-separated argument lists, so the splitting is wanted.
+# shellcheck disable=SC2086
+docker compose --env-file "$COMPOSE_ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up $POSTGRES_UP_ARGS postgres
+verify_postgres_credentials
+
+log "DiscVault compose services: $COMPOSE_UP_SERVICES"
 # shellcheck disable=SC2086
 docker compose --env-file "$COMPOSE_ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up $UP_ARGS $COMPOSE_UP_SERVICES
 

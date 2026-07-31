@@ -47,8 +47,9 @@ is_launcher_owned() {
     # Version reporting: deliberately left to the image, which bakes the real
     # build version. Mapping the launcher's coarse "v26" would report less.
     BUILD_VERSION) return 0 ;;
-    # Image selector consumed by the launcher itself: it resolves this into the
-    # DISCVAULT_IMAGE the compose services actually reference.
+    # Retired. The launcher had three overlapping ways to name an image; it now
+    # has one control, DISCVAULT_CHANNEL, with DISCVAULT_IMAGE used only in its
+    # manual position. A value still set here is warned about, not obeyed.
     DISCVAULT_NEXT_IMAGE) return 0 ;;
     # Injected into the compose file through the __DISCVAULT_MCP_PORTS__
     # substitution rather than as a ${VAR} reference, because publishing the

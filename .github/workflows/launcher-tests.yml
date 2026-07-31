@@ -33,6 +33,14 @@ jobs:
       - name: Image resolution tests
         run: sh launcher/tests/test-image-resolution.sh
 
+      - name: Rollout tests
+        run: sh launcher/tests/test-rollout.sh
+
+      - name: Rollout tests (busybox ash)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src busybox:1.36 \
+            sh launcher/tests/test-rollout.sh
+
       - name: Image resolution tests (busybox ash)
         run: |
           docker run --rm -v "$PWD:/src" -w /src busybox:1.36 \
