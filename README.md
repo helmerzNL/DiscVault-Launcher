@@ -105,6 +105,37 @@ Recommended appdata paths:
 After installation, open the WebUI and follow `/api/next/migration` when the app
 reports that legacy migration is required.
 
+## Stack Configuration
+
+The launcher persists the stack settings in `/config/stack.env` and maps them
+into the managed containers. The contract it has to satisfy is DiscVault's own
+reference deployment, `app/deploy/next/.env.example` and the matching
+`app/deploy/next/docker-compose.yml`; `launcher/tests/test-env-coverage.sh`
+fails when a variable exists there but the launcher does not plumb it through.
+
+Optional settings beyond the defaults:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DISCVAULT_NEXT_KEY_ENCRYPTION_KEY` | empty | Separate stable key for MovieVault credentials encrypted in PostgreSQL. Empty derives them from `JWT_SECRET`. |
+| `LEGACY_AUTH_ENABLED` | `false` | Opt-in password + TOTP login. Passkeys remain the recommended method. |
+| `DISCVAULT_ADMIN_DEDUP_EXECUTE_ENABLED` | `false` | Enables destructive admin dedup execution. |
+
+`DISCVAULT_NEXT_KEY_ENCRYPTION_KEY` is deliberately **not** auto-generated. The
+app falls back to `JWT_SECRET` when it is empty, so minting a separate key would
+make credentials that an existing install already encrypted under `JWT_SECRET`
+unreadable. Set it before first use, or re-enter the MovieVault credentials
+after setting it.
+
+`JWT_SECRET` and `DISCVAULT_NEXT_KEY_ENCRYPTION_KEY` go to both `next-api` and
+`next-worker`. The worker validates the same runtime secrets as the API on
+startup, and an encryption key that differs between the two makes credentials
+written by one process unreadable by the other.
+
+`BUILD_VERSION` is intentionally not mapped into `next-api`. The image bakes the
+exact build version; overriding it with the launcher's coarse channel name would
+make the app report a less precise version than it already knows.
+
 ## Update Model
 
 Unraid can only check the container image that Community Apps installed. It

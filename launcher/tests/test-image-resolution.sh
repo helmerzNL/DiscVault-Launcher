@@ -120,6 +120,7 @@ expect_eq 'value with = survives round-trip' \
 
 expect_status 'password key is secret' 0 is_secret_env_key POSTGRES_PASSWORD
 expect_status 'jwt secret key is secret' 0 is_secret_env_key JWT_SECRET
+expect_status 'key-encryption key is secret' 0 is_secret_env_key DISCVAULT_NEXT_KEY_ENCRYPTION_KEY
 expect_status 'image key is not secret' 1 is_secret_env_key DISCVAULT_NEXT_IMAGE
 
 echo '# resolve_configured_image_var precedence'

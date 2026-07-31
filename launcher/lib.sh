@@ -113,7 +113,7 @@ ensure_non_empty_env() {
 is_secret_env_key() {
   key="$1"
   case "$key" in
-    *PASSWORD*|*SECRET*|*TOKEN*|*PRIVATE_KEY*|*ACCESS_KEY*|*API_KEY*|*PASSKEY*)
+    *PASSWORD*|*SECRET*|*TOKEN*|*PRIVATE_KEY*|*ACCESS_KEY*|*API_KEY*|*PASSKEY*|*ENCRYPTION_KEY*)
       return 0
       ;;
     *)
