@@ -344,12 +344,27 @@ log_ignored_stored_override DISCVAULT_IMAGE "$IMAGE_SOURCE" "$configured_image_r
 configured_next_image="$(resolve_stack_image_alias "$configured_next_image_raw")"
 configured_image="$(resolve_stack_image_alias "$configured_image_raw")"
 
+# The Unraid channel dropdown. It sits below the explicit image overrides so a
+# digest pin still wins, and above the packaged default so switching the
+# dropdown works without also changing the launcher repository.
+CONFIGURED_CHANNEL="${DISCVAULT_CHANNEL:-}"
+CHANNEL_STACK_IMAGE=""
+if [ -n "$CONFIGURED_CHANNEL" ] && [ "$CONFIGURED_CHANNEL" != "auto" ]; then
+  CHANNEL_STACK_IMAGE="$(stack_image_for_channel "$CONFIGURED_CHANNEL")"
+  if [ -z "$CHANNEL_STACK_IMAGE" ]; then
+    log "WARNING: Unknown DISCVAULT_CHANNEL=$CONFIGURED_CHANNEL; expected latest or beta. Falling back to the launcher's packaged channel."
+  fi
+fi
+
 if [ -n "$configured_next_image_raw" ] && [ "$configured_next_image_raw" != "auto" ]; then
   STACK_IMAGE="$configured_next_image"
   STACK_IMAGE_SOURCE="DISCVAULT_NEXT_IMAGE"
 elif [ -n "$configured_image_raw" ] && [ "$configured_image_raw" != "auto" ]; then
   STACK_IMAGE="$configured_image"
   STACK_IMAGE_SOURCE="DISCVAULT_IMAGE"
+elif [ -n "$CHANNEL_STACK_IMAGE" ]; then
+  STACK_IMAGE="$CHANNEL_STACK_IMAGE"
+  STACK_IMAGE_SOURCE="DISCVAULT_CHANNEL=$CONFIGURED_CHANNEL"
 else
   STACK_IMAGE="${PACKAGED_STACK_IMAGE:-ghcr.io/helmerznl/discvault:latest}"
   STACK_IMAGE_SOURCE="packaged-default"
@@ -380,6 +395,7 @@ case "${DISCVAULT_DEPLOYMENT_MODE:-auto}" in
 esac
 
 set_env TZ "${TZ:-Europe/Amsterdam}" "$ENV_FILE"
+set_env DISCVAULT_CHANNEL "$CONFIGURED_CHANNEL" "$ENV_FILE"
 set_env DISCVAULT_IMAGE "${configured_image_raw:-auto}" "$ENV_FILE"
 set_env DISCVAULT_NEXT_IMAGE "$configured_next_image_raw" "$ENV_FILE"
 set_env DISCVAULT_DATA_DIR_HOST "${DISCVAULT_DATA_DIR_HOST:-/mnt/user/appdata/discvault}" "$ENV_FILE"
@@ -465,6 +481,7 @@ do
 done
 log "Exported launcher env file values for Docker Compose"
 log_env_snapshot \
+  DISCVAULT_CHANNEL \
   DISCVAULT_NEXT_IMAGE \
   DISCVAULT_IMAGE \
   DISCVAULT_DEPLOYMENT_MODE \

@@ -162,7 +162,13 @@ The launcher resolves image rollouts in this order:
 
 1. `DISCVAULT_NEXT_IMAGE` (primary override for v26 stack deployments).
 2. `DISCVAULT_IMAGE` (fallback, including `auto` behavior).
-3. Launcher-packaged default image for the current channel.
+3. `DISCVAULT_CHANNEL` (`latest` or `beta`, the Unraid dropdown).
+4. Launcher-packaged default image for the current channel.
+
+`DISCVAULT_CHANNEL` sits below the image overrides so a digest pin still wins,
+and above the packaged default so switching channel in Unraid works without also
+editing the Repository field. An unrecognised value logs a warning and falls
+back to the packaged channel rather than failing the boot.
 
 Both variables are read from the container environment only. An empty value
 means "no override"; a value stored in `/config/stack.env` is never used unless
@@ -270,6 +276,11 @@ of sync with what was actually published.
 `Build & Publish DiscVault Launcher` and `Stack Image Update Watch` build their
 job matrix from it, and `launcher/tests/test-channels.sh` fails if a workflow
 publishes a tag the table does not list.
+
+In Unraid you do not need to change the Repository to switch channel: the
+**DiscVault Channel** dropdown (`DISCVAULT_CHANNEL`) selects `latest` or `beta`
+directly. The launcher code is identical across channels — only the baked
+default image differs — so the dropdown is the simpler control.
 
 **Deprecated aliases.** `discvault-launcher:v26-beta` is published alongside
 `:beta`, and `discvault-launcher:v26` alongside `:latest`, from the same build.

@@ -46,6 +46,21 @@ resolve_stack_image_alias() {
   esac
 }
 
+# Map a launcher channel name onto the DiscVault image it deploys.
+#
+# This mirrors .github/channels.json, which the workflows build from. The image
+# cannot read that file (no JSON parser in the launcher container), so
+# launcher/tests/test-channels.sh asserts the two stay in agreement.
+#
+# Prints nothing for an unknown channel; the caller decides what to do.
+stack_image_for_channel() {
+  case "$1" in
+    latest) printf '%s' "$DISCVAULT_IMAGE_REPO:latest" ;;
+    beta) printf '%s' "$DISCVAULT_IMAGE_REPO:beta" ;;
+    *) printf '%s' '' ;;
+  esac
+}
+
 # Map a resolved image reference onto DiscVault's update channel.
 #
 # next_app.py accepts ("auto", "beta", "stable") and otherwise falls back to a

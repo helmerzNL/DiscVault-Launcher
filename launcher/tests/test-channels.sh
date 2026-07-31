@@ -217,5 +217,84 @@ print(f"no ({tag} is deprecated)" if tag in deprecated else "yes")
 PY
 )" 'yes'
 
+# A pipe-separated Default renders a dropdown in the Unraid UI; the element text
+# stays the actual value, so a client that ignored the syntax would still get a
+# working field. Keeping these in sync with channels.json is the point.
+expect_eq 'channel dropdown offers exactly the built channels' \
+  "$(python3 - "$TEMPLATE" "$CHANNELS" <<'PY'
+import json, sys, xml.dom.minidom
+doc = xml.dom.minidom.parse(sys.argv[1])
+node = [c for c in doc.getElementsByTagName("Config")
+        if c.getAttribute("Target") == "DISCVAULT_CHANNEL"]
+if not node:
+    print("no DISCVAULT_CHANNEL config")
+    raise SystemExit
+offered = set(node[0].getAttribute("Default").split("|"))
+built = {c["channel"] for c in json.load(open(sys.argv[2]))}
+print("yes" if offered == built else f"no (offers {sorted(offered)}, builds {sorted(built)})")
+PY
+)" 'yes'
+
+expect_eq 'channel dropdown default value is one of its options' \
+  "$(python3 - "$TEMPLATE" <<'PY'
+import sys, xml.dom.minidom
+doc = xml.dom.minidom.parse(sys.argv[1])
+node = [c for c in doc.getElementsByTagName("Config")
+        if c.getAttribute("Target") == "DISCVAULT_CHANNEL"][0]
+value = (node.firstChild.data if node.firstChild else "").strip()
+print("yes" if value in node.getAttribute("Default").split("|") else f"no ({value!r})")
+PY
+)" 'yes'
+
+expect_eq 'every boolean field is a dropdown' \
+  "$(python3 - "$TEMPLATE" <<'PY'
+import sys, xml.dom.minidom
+doc = xml.dom.minidom.parse(sys.argv[1])
+plain = []
+for c in doc.getElementsByTagName("Config"):
+    value = (c.firstChild.data if c.firstChild else "").strip()
+    default = c.getAttribute("Default")
+    if value in ("true", "false") and "|" not in default:
+        plain.append(c.getAttribute("Target"))
+print(" ".join(plain) or "none")
+PY
+)" 'none'
+
+expect_eq 'every dropdown default is a valid option' \
+  "$(python3 - "$TEMPLATE" <<'PY'
+import sys, xml.dom.minidom
+doc = xml.dom.minidom.parse(sys.argv[1])
+bad = []
+for c in doc.getElementsByTagName("Config"):
+    default = c.getAttribute("Default")
+    if "|" not in default:
+        continue
+    value = (c.firstChild.data if c.firstChild else "").strip()
+    if value not in default.split("|"):
+        bad.append(f"{c.getAttribute('Target')}={value!r}")
+print(" ".join(bad) or "none")
+PY
+)" 'none'
+
+# The launcher image cannot read channels.json, so lib.sh carries its own copy
+# of the mapping. This is the guard that keeps the two honest.
+expect_eq 'lib.sh channel mapping matches channels.json' \
+  "$(python3 - "$CHANNELS" <<'PY'
+import json, subprocess, sys
+lib = "launcher/lib.sh"
+mismatch = []
+for c in json.load(open(sys.argv[1])):
+    out = subprocess.run(
+        ["sh", "-c", f'. {lib}; stack_image_for_channel "{c["channel"]}"'],
+        capture_output=True, text=True).stdout.strip()
+    if out != c["stack_image"]:
+        mismatch.append(f"{c['channel']}: lib.sh={out!r} channels.json={c['stack_image']!r}")
+print(" ".join(mismatch) or "none")
+PY
+)" 'none'
+
+expect_eq 'lib.sh rejects an unknown channel' \
+  "$(sh -c '. launcher/lib.sh; stack_image_for_channel nope')" ''
+
 printf '\n%s checks, %s failures\n' "$CHECKS" "$FAILURES"
 [ "$FAILURES" -eq 0 ]
