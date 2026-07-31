@@ -38,7 +38,17 @@ cat > "$BIN/curl" <<'STUB'
 #!/bin/sh
 echo '{"sha":"stubrevision"}'
 STUB
-chmod +x "$BIN/nginx" "$BIN/curl"
+# busybox has no openssl applet, and this suite runs under busybox ash in CI.
+# STUB_OPENSSL=fail makes it behave like a missing one.
+cat > "$BIN/openssl" <<'STUB'
+#!/bin/sh
+if [ "${STUB_OPENSSL:-ok}" = fail ]; then
+  echo 'sh: openssl: not found' >&2
+  exit 127
+fi
+echo 'aaaaaaaabbbbbbbbccccccccddddddddeeeeeeeeffffffff0000000011111111'
+STUB
+chmod +x "$BIN/nginx" "$BIN/curl" "$BIN/openssl"
 
 # Run the entrypoint in an isolated config dir. Extra environment comes from the
 # caller as KEY=VALUE arguments.
@@ -223,6 +233,27 @@ run_entrypoint unreachable STUB_PSQL=unreachable
 expect_status 'refuses to continue' 1
 expect_log 'reports it as unreachable' 'did not accept connections'
 expect_no_log 'does not blame the password' 'only applies when the data directory is first initialised'
+
+echo '# secret generation'
+
+run_entrypoint gen STUB_PSQL=ok
+expect_log 'generates the missing secrets' 'Generated a new POSTGRES_PASSWORD'
+expect_status 'and boots' 0
+
+# Without this the boot ended on "Required launcher env POSTGRES_PASSWORD is
+# empty", which describes the symptom and not the cause -- and an empty value
+# had already been written to stack.env.
+run_entrypoint gen-fail STUB_PSQL=ok STUB_OPENSSL=fail
+expect_status 'refuses to boot when no secret can be generated' 1
+expect_log 'names openssl as the cause' 'openssl produced no output'
+CHECKS=$((CHECKS + 1))
+if [ -n "$(sed -n 's/^POSTGRES_PASSWORD=//p' "$RUN_CFG/stack.env")" ] ||
+   ! grep -q '^POSTGRES_PASSWORD=' "$RUN_CFG/stack.env" 2>/dev/null; then
+  printf 'ok   %s\n' 'never persists an empty secret'
+else
+  printf 'FAIL an empty POSTGRES_PASSWORD was written to stack.env\n'
+  FAILURES=$((FAILURES + 1))
+fi
 
 echo '# secrets never reach the logs'
 

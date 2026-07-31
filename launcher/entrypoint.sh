@@ -35,7 +35,35 @@ fail() {
 }
 
 random_secret() {
-  openssl rand -hex 32
+  openssl rand -hex 32 2>/dev/null || true
+}
+
+# Take the secret from the environment, keep the one already generated, or make
+# a new one -- and refuse to persist an empty value.
+#
+# The generation used to sit inside a command substitution, where `fail` would
+# only have exited that subshell. An openssl that produced nothing therefore
+# wrote an empty secret to stack.env and the boot ended on "Required launcher
+# env POSTGRES_PASSWORD is empty", which says nothing about the actual cause.
+ensure_stack_secret() {
+  key="$1"
+  provided="$2"
+
+  if [ -n "$provided" ]; then
+    set_env "$key" "$provided" "$ENV_FILE"
+    return 0
+  fi
+
+  if [ -n "$(env_file_value "$key" "$ENV_FILE")" ]; then
+    return 0
+  fi
+
+  generated="$(random_secret)"
+  if [ -z "$generated" ]; then
+    fail "Cannot generate $key: openssl produced no output. Install openssl in the launcher image, or set $key explicitly in the launcher environment."
+  fi
+  set_env "$key" "$generated" "$ENV_FILE"
+  log "Generated a new $key and stored it in $ENV_FILE"
 }
 
 image_id() {
@@ -555,17 +583,8 @@ set_env DISCVAULT_ADMIN_DEDUP_EXECUTE_ENABLED "${DISCVAULT_ADMIN_DEDUP_EXECUTE_E
 # that existing installs already encrypted under JWT_SECRET undecryptable.
 set_env DISCVAULT_NEXT_KEY_ENCRYPTION_KEY "${DISCVAULT_NEXT_KEY_ENCRYPTION_KEY:-}" "$ENV_FILE"
 
-if [ -n "${POSTGRES_PASSWORD:-}" ]; then
-  set_env POSTGRES_PASSWORD "$POSTGRES_PASSWORD" "$ENV_FILE"
-else
-  ensure_non_empty_env POSTGRES_PASSWORD "$(random_secret)" "$ENV_FILE"
-fi
-
-if [ -n "${JWT_SECRET:-}" ]; then
-  set_env JWT_SECRET "$JWT_SECRET" "$ENV_FILE"
-else
-  ensure_non_empty_env JWT_SECRET "$(random_secret)" "$ENV_FILE"
-fi
+ensure_stack_secret POSTGRES_PASSWORD "${POSTGRES_PASSWORD:-}"
+ensure_stack_secret JWT_SECRET "${JWT_SECRET:-}"
 require_non_empty_env POSTGRES_PASSWORD "$ENV_FILE"
 require_non_empty_env JWT_SECRET "$ENV_FILE"
 log "Verified launcher secrets are present in $ENV_FILE"
