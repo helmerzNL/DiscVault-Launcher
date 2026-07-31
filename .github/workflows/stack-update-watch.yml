@@ -118,9 +118,6 @@ jobs:
             echo "launcher_tags<<EOF"
             echo "${REGISTRY}/${IMAGE_NAME}:${launcher_tag}"
             echo "$digest_tag"
-            if [[ "$launcher_tag" == "latest" ]]; then
-              echo "${REGISTRY}/${IMAGE_NAME}:legacy"
-            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 

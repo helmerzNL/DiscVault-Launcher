@@ -91,7 +91,6 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-            type=raw,value=legacy,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
             type=raw,value=dev,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26-dev' }}
             type=raw,value=v26-beta,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26-beta' }}
             type=raw,value=v26,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/release/v26' }}

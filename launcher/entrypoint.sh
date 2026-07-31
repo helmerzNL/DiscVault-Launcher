@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+# shellcheck source=launcher/lib.sh
+. "${DISCVAULT_LAUNCHER_LIB:-/opt/discvault-launcher/lib.sh}"
+
 LOG_FILE=""
 ROLLOUT_LOCK_DIR=""
 ROLLOUT_LOCK_TIMEOUT="${DISCVAULT_ROLLOUT_LOCK_TIMEOUT:-300}"
@@ -37,53 +40,6 @@ random_secret() {
 
 image_id() {
   docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true
-}
-
-resolve_stack_image_alias() {
-  value="$1"
-  case "$value" in
-    auto|prod|latest|v26)
-      printf '%s' 'ghcr.io/helmerznl/discvault:latest'
-      ;;
-    beta)
-      printf '%s' 'ghcr.io/helmerznl/discvault:beta'
-      ;;
-    v26-beta)
-      printf '%s' 'ghcr.io/helmerznl/discvault:v26-beta'
-      ;;
-    *)
-      printf '%s' "$value"
-      ;;
-  esac
-}
-
-normalize_digest() {
-  value="$1"
-  case "$value" in
-    sha256:*) printf '%s' "$value" ;;
-    *) printf 'sha256:%s' "$value" ;;
-  esac
-}
-
-image_repo_from_ref() {
-  ref_without_digest="${1%@*}"
-  last_segment="${ref_without_digest##*/}"
-  if [ "${last_segment#*:}" != "$last_segment" ]; then
-    printf '%s' "${ref_without_digest%:*}"
-  else
-    printf '%s' "$ref_without_digest"
-  fi
-}
-
-is_digest_pinned_ref() {
-  case "$1" in
-    *@sha256:*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-pinned_digest_from_ref() {
-  normalize_digest "${1##*@}"
 }
 
 remote_digest_for_ref() {
@@ -204,41 +160,6 @@ health_sha_from_next_api() {
   printf '%s' "$health_json" | sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
 }
 
-set_env() {
-  key="$1"
-  value="$2"
-  file="$3"
-  tmp="${file}.tmp"
-  grep -v "^${key}=" "$file" > "$tmp" 2>/dev/null || true
-  printf '%s=%s\n' "$key" "$value" >> "$tmp"
-  mv "$tmp" "$file"
-}
-
-ensure_env() {
-  key="$1"
-  value="$2"
-  file="$3"
-  if ! grep -q "^${key}=" "$file" 2>/dev/null; then
-    printf '%s=%s\n' "$key" "$value" >> "$file"
-  fi
-}
-
-env_file_value() {
-  key="$1"
-  file="$2"
-  grep "^${key}=" "$file" 2>/dev/null | tail -n 1 | cut -d= -f2- || true
-}
-
-ensure_non_empty_env() {
-  key="$1"
-  value="$2"
-  file="$3"
-  current="$(env_file_value "$key" "$file")"
-  if [ -z "$current" ]; then
-    set_env "$key" "$value" "$file"
-  fi
-}
-
 require_non_empty_env() {
   key="$1"
   file="$2"
@@ -253,18 +174,6 @@ export_env_from_file() {
   file="$2"
   value="$(env_file_value "$key" "$file")"
   export "$key=$value"
-}
-
-is_secret_env_key() {
-  key="$1"
-  case "$key" in
-    *PASSWORD*|*SECRET*|*TOKEN*|*PRIVATE_KEY*|*ACCESS_KEY*|*API_KEY*|*PASSKEY*)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
 }
 
 log_env_snapshot() {
@@ -406,8 +315,32 @@ log "Using launcher env file $ENV_FILE"
 log "Boot session log file $LOG_FILE"
 log "Boot session log retention ${BOOT_LOG_RETENTION} sessions"
 
-configured_next_image_raw="${DISCVAULT_NEXT_IMAGE:-$(env_file_value DISCVAULT_NEXT_IMAGE "$ENV_FILE")}"
-configured_image_raw="${DISCVAULT_IMAGE:-$(env_file_value DISCVAULT_IMAGE "$ENV_FILE")}"
+log_ignored_stored_override() {
+  key="$1"
+  value_source="$2"
+  active_value="$3"
+  stored_value="$(env_file_value "$key" "$ENV_FILE")"
+  if [ "$value_source" = "container-env" ] && [ -n "$stored_value" ] && [ "$stored_value" != "$active_value" ]; then
+    log "Ignoring stored $key=$stored_value from $ENV_FILE; container env is authoritative (now ${active_value:-<empty>})"
+  fi
+}
+
+# The container environment wins over anything persisted in stack.env. Both
+# variables are always defined by the launcher image, so an empty value means
+# "no override" rather than "fall back to the stored value". Without this, an
+# override written to stack.env once -- for example the digest pin the README
+# used to recommend -- could never be cleared from the Unraid UI again, and the
+# stack stayed frozen on that image forever.
+resolve_configured_image_var DISCVAULT_NEXT_IMAGE "$ENV_FILE"
+NEXT_IMAGE_SOURCE="$CONFIGURED_IMAGE_SOURCE"
+configured_next_image_raw="$CONFIGURED_IMAGE_VALUE"
+log_ignored_stored_override DISCVAULT_NEXT_IMAGE "$NEXT_IMAGE_SOURCE" "$configured_next_image_raw"
+
+resolve_configured_image_var DISCVAULT_IMAGE "$ENV_FILE"
+IMAGE_SOURCE="$CONFIGURED_IMAGE_SOURCE"
+configured_image_raw="$CONFIGURED_IMAGE_VALUE"
+log_ignored_stored_override DISCVAULT_IMAGE "$IMAGE_SOURCE" "$configured_image_raw"
+
 configured_next_image="$(resolve_stack_image_alias "$configured_next_image_raw")"
 configured_image="$(resolve_stack_image_alias "$configured_image_raw")"
 
@@ -431,20 +364,20 @@ if [ -n "$configured_next_image_raw" ]; then
   export DISCVAULT_NEXT_IMAGE="$configured_next_image"
 fi
 
-DEPLOYMENT_MODE="${DISCVAULT_DEPLOYMENT_MODE:-auto}"
-if [ "$DEPLOYMENT_MODE" = "auto" ]; then
-  case "$STACK_IMAGE" in
-    *:latest|*:legacy)
-      DEPLOYMENT_MODE="legacy"
-      ;;
-    *)
-      DEPLOYMENT_MODE="stack"
-      ;;
-  esac
-fi
-if [ "$DEPLOYMENT_MODE" != "legacy" ] && [ "$DEPLOYMENT_MODE" != "stack" ]; then
-  fail "Unsupported DISCVAULT_DEPLOYMENT_MODE=$DEPLOYMENT_MODE; use auto, legacy, or stack"
-fi
+# Legacy single-container mode was removed: DiscVault dropped app/Dockerfile and
+# now builds every channel -- including :latest -- from app/Dockerfile.v26, so
+# every published image is the PostgreSQL-backed v26 stack. Keep accepting the
+# old setting so existing configs do not break, but never act on it.
+case "${DISCVAULT_DEPLOYMENT_MODE:-auto}" in
+  auto|stack)
+    ;;
+  legacy)
+    log "WARNING: DISCVAULT_DEPLOYMENT_MODE=legacy is no longer supported; every DiscVault channel is now the v26 stack. Continuing in stack mode."
+    ;;
+  *)
+    log "WARNING: Ignoring unsupported DISCVAULT_DEPLOYMENT_MODE=${DISCVAULT_DEPLOYMENT_MODE:-}; continuing in stack mode."
+    ;;
+esac
 
 set_env TZ "${TZ:-Europe/Amsterdam}" "$ENV_FILE"
 set_env DISCVAULT_IMAGE "${configured_image_raw:-auto}" "$ENV_FILE"
@@ -543,30 +476,23 @@ if [ -n "$configured_next_image_raw" ]; then
 fi
 log "Prepared compose env file $COMPOSE_ENV_FILE with resolved DISCVAULT_IMAGE=$STACK_IMAGE"
 
-if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
-  cp /opt/discvault-launcher/docker-compose.legacy.yml "$COMPOSE_FILE"
-  DISCVAULT_UPSTREAM="next-api:80"
-  DISCVAULT_MCP_LOCATIONS=""
-  COMPOSE_UP_SERVICES="next-api"
-else
-  DISCVAULT_UPSTREAM="next-api:5000"
-  COMPOSE_UP_SERVICES="postgres next-api next-worker next-mcp"
-  if [ -n "${DISCVAULT_NEXT_MCP_PORT:-}" ]; then
-    DISCVAULT_MCP_PORTS='    ports:
+COMPOSE_UP_SERVICES="postgres next-api next-worker next-mcp"
+if [ -n "${DISCVAULT_NEXT_MCP_PORT:-}" ]; then
+  DISCVAULT_MCP_PORTS='    ports:
       - "'"$DISCVAULT_NEXT_MCP_PORT"':6090"'
-    log "Publishing DiscVault MCP direct host port $DISCVAULT_NEXT_MCP_PORT"
-  else
-    DISCVAULT_MCP_PORTS=""
-    log "DiscVault MCP direct host port disabled; use the launcher proxy at /mcp"
-  fi
-  awk -v mcp_ports="$DISCVAULT_MCP_PORTS" '{
-    if ($0 ~ /__DISCVAULT_MCP_PORTS__/) {
-      print mcp_ports
-    } else {
-      print
-    }
-  }' /opt/discvault-launcher/docker-compose.yml > "$COMPOSE_FILE"
-  DISCVAULT_MCP_LOCATIONS='    location = /mcp-health {
+  log "Publishing DiscVault MCP direct host port $DISCVAULT_NEXT_MCP_PORT"
+else
+  DISCVAULT_MCP_PORTS=""
+  log "DiscVault MCP direct host port disabled; use the launcher proxy at /mcp"
+fi
+awk -v mcp_ports="$DISCVAULT_MCP_PORTS" '{
+  if ($0 ~ /__DISCVAULT_MCP_PORTS__/) {
+    print mcp_ports
+  } else {
+    print
+  }
+}' /opt/discvault-launcher/docker-compose.yml > "$COMPOSE_FILE"
+DISCVAULT_MCP_LOCATIONS='    location = /mcp-health {
         proxy_pass http://next-mcp:6090/health;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -591,9 +517,7 @@ else
         proxy_read_timeout 180s;
         proxy_send_timeout 180s;
     }'
-fi
-awk -v upstream="$DISCVAULT_UPSTREAM" -v mcp_locations="$DISCVAULT_MCP_LOCATIONS" '{
-  gsub(/__DISCVAULT_UPSTREAM__/, upstream)
+awk -v mcp_locations="$DISCVAULT_MCP_LOCATIONS" '{
   if ($0 ~ /__DISCVAULT_MCP_LOCATIONS__/) {
     print mcp_locations
   } else {
@@ -612,6 +536,7 @@ fi
 if is_digest_pinned_ref "$STACK_IMAGE"; then
   DESIRED_DIGEST="$(pinned_digest_from_ref "$STACK_IMAGE")"
   DESIRED_DIGEST_SOURCE="pinned"
+  log "WARNING: $STACK_IMAGE is digest-pinned via $STACK_IMAGE_SOURCE; automatic DiscVault updates stay disabled until that override is cleared."
 else
   DESIRED_DIGEST="$(remote_digest_for_ref "$STACK_IMAGE" || true)"
   if [ -z "$DESIRED_DIGEST" ]; then
@@ -622,20 +547,16 @@ fi
 STACK_IMAGE_REPO="$(image_repo_from_ref "$STACK_IMAGE")"
 
 LAST_STACK_DIGEST="$(cat "$LAST_STACK_DIGEST_FILE" 2>/dev/null || true)"
-log "DiscVault image selection source=$STACK_IMAGE_SOURCE configured_next_image=${configured_next_image_raw:-<empty>} configured_image=${configured_image_raw:-<empty>} resolved_ref=$STACK_IMAGE repo=$STACK_IMAGE_REPO deployment_mode=$DEPLOYMENT_MODE"
+log "DiscVault image selection source=$STACK_IMAGE_SOURCE configured_next_image=${configured_next_image_raw:-<empty>} (from $NEXT_IMAGE_SOURCE) configured_image=${configured_image_raw:-<empty>} (from $IMAGE_SOURCE) resolved_ref=$STACK_IMAGE repo=$STACK_IMAGE_REPO"
 log "DiscVault desired digest source=$DESIRED_DIGEST_SOURCE desired_digest=$DESIRED_DIGEST"
 log "DiscVault metadata digests packaged=${PACKAGED_STACK_DIGEST:-none} last_applied=${LAST_STACK_DIGEST:-none}"
 
 trap 'release_rollout_lock' EXIT INT TERM
 acquire_rollout_lock
 
-if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
-  log_service_runtime_state "before-recreate" next-api "$STACK_IMAGE_REPO" || true
-else
-  log_service_runtime_state "before-recreate" next-api "$STACK_IMAGE_REPO" || true
-  log_service_runtime_state "before-recreate" next-worker "$STACK_IMAGE_REPO" || true
-  log_service_runtime_state "before-recreate" next-mcp "$STACK_IMAGE_REPO" || true
-fi
+for service in next-api next-worker next-mcp; do
+  log_service_runtime_state "before-recreate" "$service" "$STACK_IMAGE_REPO" || true
+done
 
 STACK_IMAGE_BEFORE_ID="$(image_id "$STACK_IMAGE")"
 STACK_IMAGE_BEFORE_DIGEST="$(local_digest_for_ref "$STACK_IMAGE" "$STACK_IMAGE_REPO")"
@@ -662,16 +583,10 @@ FORCE_RECREATE_REASON=""
 if [ "$ALWAYS_RECREATE_STACK" = "true" ]; then
   FORCE_RECREATE_REASON="DISCVAULT_ALWAYS_RECREATE_STACK=true"
 elif [ "$FORCE_RECREATE_ON_PULL" = "true" ]; then
-  if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
-    if ! service_runtime_matches next-api "$DESIRED_DIGEST" "$STACK_IMAGE_AFTER_ID" "$STACK_IMAGE_REPO"; then
-      FORCE_RECREATE_REASON="Running legacy service digest/image-id does not match desired digest $DESIRED_DIGEST"
-    fi
-  else
-    if ! service_runtime_matches next-api "$DESIRED_DIGEST" "$STACK_IMAGE_AFTER_ID" "$STACK_IMAGE_REPO" || \
-      ! service_runtime_matches next-worker "$DESIRED_DIGEST" "$STACK_IMAGE_AFTER_ID" "$STACK_IMAGE_REPO" || \
-      ! service_runtime_matches next-mcp "$DESIRED_DIGEST" "$STACK_IMAGE_AFTER_ID" "$STACK_IMAGE_REPO"; then
-      FORCE_RECREATE_REASON="Running stack service digest/image-id does not match desired digest $DESIRED_DIGEST"
-    fi
+  if ! service_runtime_matches next-api "$DESIRED_DIGEST" "$STACK_IMAGE_AFTER_ID" "$STACK_IMAGE_REPO" || \
+    ! service_runtime_matches next-worker "$DESIRED_DIGEST" "$STACK_IMAGE_AFTER_ID" "$STACK_IMAGE_REPO" || \
+    ! service_runtime_matches next-mcp "$DESIRED_DIGEST" "$STACK_IMAGE_AFTER_ID" "$STACK_IMAGE_REPO"; then
+    FORCE_RECREATE_REASON="Running stack service digest/image-id does not match desired digest $DESIRED_DIGEST"
   fi
 fi
 
@@ -680,18 +595,16 @@ if [ -n "$FORCE_RECREATE_REASON" ]; then
   UP_ARGS="-d --remove-orphans --force-recreate"
 fi
 
-log "Starting or updating DiscVault $DEPLOYMENT_MODE project $PROJECT_NAME"
+log "Starting or updating DiscVault stack project $PROJECT_NAME"
 log "DiscVault compose services: $COMPOSE_UP_SERVICES"
+# Both variables hold space-separated argument lists, so the splitting is wanted.
+# shellcheck disable=SC2086
 docker compose --env-file "$COMPOSE_ENV_FILE" -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up $UP_ARGS $COMPOSE_UP_SERVICES
 
-if [ "$DEPLOYMENT_MODE" = "legacy" ]; then
-  log_service_runtime_state "after-recreate" next-api "$STACK_IMAGE_REPO" || true
-else
-  log_service_runtime_state "after-recreate" next-api "$STACK_IMAGE_REPO" || true
-  log_service_runtime_state "after-recreate" next-worker "$STACK_IMAGE_REPO" || true
-  log_service_runtime_state "after-recreate" next-mcp "$STACK_IMAGE_REPO" || true
-  verify_stack_after_deploy "$DESIRED_DIGEST" "$STACK_IMAGE_REPO" "$CHECK_HEALTH_SHA"
-fi
+for service in next-api next-worker next-mcp; do
+  log_service_runtime_state "after-recreate" "$service" "$STACK_IMAGE_REPO" || true
+done
+verify_stack_after_deploy "$DESIRED_DIGEST" "$STACK_IMAGE_REPO" "$CHECK_HEALTH_SHA"
 
 printf '%s\n' "$DESIRED_DIGEST" > "$LAST_STACK_DIGEST_FILE"
 log "Recorded last applied digest $DESIRED_DIGEST in $LAST_STACK_DIGEST_FILE"

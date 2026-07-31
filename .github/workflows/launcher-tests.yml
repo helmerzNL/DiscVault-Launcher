@@ -1,0 +1,40 @@
+name: Launcher Tests
+
+on:
+  push:
+    branches:
+      - main
+      - "release/**"
+      - "claude/**"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: launcher-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: ShellCheck
+        run: |
+          shellcheck --version
+          shellcheck -s sh --severity=warning \
+            launcher/entrypoint.sh \
+            launcher/lib.sh \
+            launcher/tests/test-image-resolution.sh
+
+      - name: Image resolution tests
+        run: sh launcher/tests/test-image-resolution.sh
+
+      - name: Image resolution tests (busybox ash)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src busybox:1.36 \
+            sh launcher/tests/test-image-resolution.sh
+
+      - name: Build launcher image
+        run: docker build -t discvault-launcher:ci .

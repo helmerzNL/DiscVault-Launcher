@@ -1,10 +1,9 @@
 # DiscVault Launcher
 
 DiscVault Launcher is a small deployment manager for DiscVault Docker channels.
-It can run the legacy single-container app for `latest`/`legacy`, or the
-PostgreSQL-backed DiscVault 26 stack for v26 channels. It is intentionally
-separate from the DiscVault application image and from the standalone Docker
-Compose stack.
+It runs the PostgreSQL-backed DiscVault 26 stack. It is intentionally separate
+from the DiscVault application image and from the standalone Docker Compose
+stack.
 
 The split is deliberate:
 
@@ -20,16 +19,27 @@ The split is deliberate:
 Unraid Community Apps
   -> DiscVault Launcher container
     -> Docker socket
-      -> legacy latest: discvault
-      -> v26 stack: postgres + next-api + next-worker
+      -> v26 stack: postgres + next-api + next-worker + next-mcp
     -> Nginx proxy on the Unraid WebUI port
 ```
 
-The launcher keeps running as the public web endpoint and proxies requests to
-the managed DiscVault container. Legacy mode proxies to the all-in-one
-container on port `80`; v26 stack mode proxies to `next-api:5000`. The managed
-containers do not bind their own host ports in launcher mode, so an existing
-Unraid WebUI port such as `6080` stays stable.
+The launcher keeps running as the public web endpoint and proxies `/` to
+`next-api:5000` and `/mcp` to `next-mcp:6090`. The managed containers do not
+bind their own host ports in launcher mode, so an existing Unraid WebUI port
+such as `6080` stays stable.
+
+### Legacy mode was removed
+
+DiscVault deleted `app/Dockerfile` and now builds every channel — including
+`:latest` — from `app/Dockerfile.v26`. Every published `helmerznl/discvault`
+image is therefore the v26 stack, and the launcher no longer has a legacy
+single-container mode. `DISCVAULT_DEPLOYMENT_MODE=legacy` is still accepted but
+logs a warning and runs the v26 stack.
+
+The `helmerznl/discvault-launcher:legacy` tag is no longer published as a
+result. If you are still on it, switch the Unraid repository to
+`ghcr.io/helmerznl/discvault-launcher:latest`; the frozen `discvault:legacy` app
+image can no longer be deployed by the launcher.
 
 ## Standalone Docker Compose
 
@@ -72,10 +82,11 @@ docker run -d \
 
 The first start writes generated secrets to `/config/stack.env`. Keep that file
 stable; it contains the PostgreSQL password and JWT secret used by the stack.
-In legacy `latest`/`legacy` mode, the same generated `JWT_SECRET`, `RP_ID`,
-`RP_ORIGIN`, and `RP_ORIGINS` values are passed through to the actual
-`discvault:latest` app container so existing passkeys keep working after a
-launcher restart.
+
+`stack.env` is **not** authoritative for image selection. `DISCVAULT_NEXT_IMAGE`
+and `DISCVAULT_IMAGE` are always read from the container environment, so
+clearing the field in Unraid really clears the override. Any stale value left in
+`stack.env` is ignored and logged.
 
 ## Unraid Community Apps
 
@@ -107,13 +118,14 @@ tag when the stack image changes.
 2. Unraid detects the launcher image update.
 3. Community Apps or the Auto Update plugin updates the launcher container.
 4. The launcher starts and pulls only the resolved DiscVault app image.
-5. For `latest`/`legacy`, the launcher starts only the legacy DiscVault
-   all-in-one container.
-6. For `dev`, `v26-beta`, `v26`, and immutable `v26.x.y` tags, the launcher
-   runs the PostgreSQL-backed v26 stack.
-7. In v26 mode, `next-api` applies PostgreSQL migrations before serving
-   traffic.
-8. The existing beta data stays in place and is imported by the migration UI.
+5. Every channel runs the PostgreSQL-backed v26 stack.
+6. `next-api` applies PostgreSQL migrations before serving traffic.
+7. The existing beta data stays in place and is imported by the migration UI.
+
+The launcher only checks for a new DiscVault image **at container start**. It
+does not poll while running, so a new DiscVault build reaches you when the
+launcher container restarts — either through the Unraid update above, or by
+restarting the container by hand.
 
 The launcher resolves image rollouts in this order:
 
@@ -121,18 +133,23 @@ The launcher resolves image rollouts in this order:
 2. `DISCVAULT_IMAGE` (fallback, including `auto` behavior).
 3. Launcher-packaged default image for the current channel.
 
+Both variables are read from the container environment only. An empty value
+means "no override"; a value stored in `/config/stack.env` is never used unless
+the variable is absent from the environment entirely.
+
 If no override is set, the safe default is `ghcr.io/helmerznl/discvault:latest`.
 Manual GitHub Actions launcher publishes should therefore default to baking in
 `discvault:latest` unless a different DiscVault image is intentionally selected.
 
-Supported shorthand values are:
+Shorthand resolution:
 
-- `auto` -> `ghcr.io/helmerznl/discvault:latest`
-- `prod` -> `ghcr.io/helmerznl/discvault:latest`
-- `latest` -> `ghcr.io/helmerznl/discvault:latest`
-- `v26` -> `ghcr.io/helmerznl/discvault:latest`
-- `beta` -> `ghcr.io/helmerznl/discvault:beta`
-- `v26-beta` -> `ghcr.io/helmerznl/discvault:v26-beta`
+- Anything containing a `/` is used as-is (a full image reference, with an
+  optional `:tag` and/or `@sha256:` digest).
+- `auto` and `prod` map to `ghcr.io/helmerznl/discvault:latest`. They are not
+  real tags; they mean "the stable channel".
+- Any other bare value is the tag of the same name on
+  `ghcr.io/helmerznl/discvault`. That covers `latest`, `stable`, `v26`,
+  `v26-beta`, `beta`, `dev`, and immutable release tags such as `v26.7.7`.
 
 For mutable tags such as `v26-beta`, the launcher resolves the current remote
 digest and treats that digest as the deployment source-of-truth. For digest
@@ -154,16 +171,22 @@ For troubleshooting or aggressive test deployments, set
 `DISCVAULT_ALWAYS_RECREATE_STACK=true`. That forces `--force-recreate` on every
 launcher start after pulling.
 
-### Temporary workaround / explicit pinning
+### Explicit pinning
 
-Until your target image channel has the fix live, you can force a deterministic
-build by pinning a digest in `/config/stack.env`:
+To force a deterministic build, set the `DISCVAULT_NEXT_IMAGE` container
+variable (the Unraid field, or `-e` on `docker run`) to a digest-pinned
+reference:
 
 ```env
 DISCVAULT_NEXT_IMAGE=ghcr.io/helmerznl/discvault:v26-beta@sha256:<digest>
 ```
 
-Then recreate by restarting the launcher container.
+Then restart the launcher container. A pinned digest disables automatic updates
+by design; the launcher logs a warning on every boot while a pin is active.
+Clear the variable to resume normal channel updates.
+
+Do not pin by editing `/config/stack.env` — that file is no longer read for
+image selection, precisely so a forgotten pin cannot freeze the stack.
 
 ### Launcher boot-session logs
 
@@ -208,12 +231,11 @@ The scheduled watcher publishes `discvault-launcher:latest` for
 DiscVault app image baked into its own channel. Set `DISCVAULT_NEXT_IMAGE` to a
 full image reference only when you want to override that channel intentionally.
 
-`ghcr.io/helmerznl/discvault:latest` is the legacy single-container app. When
-the launcher resolves to `discvault:latest` or `discvault:legacy`, it starts
-only that one container and does not pull or start PostgreSQL, `next-api`, or
-`next-worker`.
+`ghcr.io/helmerznl/discvault:latest` is the stable v26 stack image, not the old
+single-container app. Every channel starts PostgreSQL, `next-api`,
+`next-worker`, and `next-mcp`.
 
-For legacy passkeys, configure these values on the launcher and keep them
+For stable passkeys, configure these values on the launcher and keep them
 stable:
 
 ```text
@@ -229,8 +251,7 @@ the exact browser origin used for registration and login.
 Channel mapping:
 
 ```text
-discvault-launcher:latest    -> discvault:latest    (legacy single container)
-discvault-launcher:legacy    -> discvault:latest    (legacy single container)
+discvault-launcher:latest    -> discvault:latest
 discvault-launcher:dev       -> discvault:dev
 discvault-launcher:v26-beta  -> discvault:v26-beta
 discvault-launcher:v26       -> discvault:v26
