@@ -127,15 +127,15 @@ echo '# env file helpers'
 
 ENV_FILE="$TMP_DIR/stack.env"
 : > "$ENV_FILE"
-set_env DISCVAULT_NEXT_IMAGE "$REPO:v26-beta@sha256:deadbeef" "$ENV_FILE"
+set_env DISCVAULT_IMAGE "$REPO:v26-beta@sha256:deadbeef" "$ENV_FILE"
 expect_eq 'set_env then read back' \
-  "$(env_file_value DISCVAULT_NEXT_IMAGE "$ENV_FILE")" "$REPO:v26-beta@sha256:deadbeef"
+  "$(env_file_value DISCVAULT_IMAGE "$ENV_FILE")" "$REPO:v26-beta@sha256:deadbeef"
 
-set_env DISCVAULT_NEXT_IMAGE "$REPO:dev" "$ENV_FILE"
+set_env DISCVAULT_IMAGE "$REPO:dev" "$ENV_FILE"
 expect_eq 'set_env replaces rather than appends' \
-  "$(env_file_value DISCVAULT_NEXT_IMAGE "$ENV_FILE")" "$REPO:dev"
+  "$(env_file_value DISCVAULT_IMAGE "$ENV_FILE")" "$REPO:dev"
 expect_eq 'set_env keeps a single line' \
-  "$(grep -c '^DISCVAULT_NEXT_IMAGE=' "$ENV_FILE")" '1'
+  "$(grep -c '^DISCVAULT_IMAGE=' "$ENV_FILE")" '1'
 
 expect_eq 'value with = survives round-trip' \
   "$(set_env SOME_KEY 'a=b=c' "$ENV_FILE"; env_file_value SOME_KEY "$ENV_FILE")" 'a=b=c'
@@ -143,31 +143,31 @@ expect_eq 'value with = survives round-trip' \
 expect_status 'password key is secret' 0 is_secret_env_key POSTGRES_PASSWORD
 expect_status 'jwt secret key is secret' 0 is_secret_env_key JWT_SECRET
 expect_status 'key-encryption key is secret' 0 is_secret_env_key DISCVAULT_NEXT_KEY_ENCRYPTION_KEY
-expect_status 'image key is not secret' 1 is_secret_env_key DISCVAULT_NEXT_IMAGE
+expect_status 'image key is not secret' 1 is_secret_env_key DISCVAULT_IMAGE
 
 echo '# resolve_configured_image_var precedence'
 
 # This is the regression that froze stacks in the field: the launcher image
-# always defines DISCVAULT_NEXT_IMAGE (empty by default) and Unraid passes it on
-# every start, so an empty value must mean "no override" -- not "fall back to
-# whatever was written to stack.env once".
+# always defines DISCVAULT_IMAGE and Unraid passes it on every start, so an
+# empty value must mean "no value" -- not "fall back to whatever was written to
+# stack.env once".
 : > "$ENV_FILE"
-set_env DISCVAULT_NEXT_IMAGE "$REPO:v26-beta@sha256:deadbeef" "$ENV_FILE"
+set_env DISCVAULT_IMAGE "$REPO:v26-beta@sha256:deadbeef" "$ENV_FILE"
 
-DISCVAULT_NEXT_IMAGE=''
-export DISCVAULT_NEXT_IMAGE
-resolve_configured_image_var DISCVAULT_NEXT_IMAGE "$ENV_FILE"
+DISCVAULT_IMAGE=''
+export DISCVAULT_IMAGE
+resolve_configured_image_var DISCVAULT_IMAGE "$ENV_FILE"
 expect_eq 'empty container env wins over stored pin' "$CONFIGURED_IMAGE_VALUE" ''
 expect_eq 'empty container env reports its source' "$CONFIGURED_IMAGE_SOURCE" 'container-env'
 
-DISCVAULT_NEXT_IMAGE="$REPO:dev"
-export DISCVAULT_NEXT_IMAGE
-resolve_configured_image_var DISCVAULT_NEXT_IMAGE "$ENV_FILE"
+DISCVAULT_IMAGE="$REPO:dev"
+export DISCVAULT_IMAGE
+resolve_configured_image_var DISCVAULT_IMAGE "$ENV_FILE"
 expect_eq 'set container env wins over stored pin' "$CONFIGURED_IMAGE_VALUE" "$REPO:dev"
 expect_eq 'set container env reports its source' "$CONFIGURED_IMAGE_SOURCE" 'container-env'
 
-unset DISCVAULT_NEXT_IMAGE
-resolve_configured_image_var DISCVAULT_NEXT_IMAGE "$ENV_FILE"
+unset DISCVAULT_IMAGE
+resolve_configured_image_var DISCVAULT_IMAGE "$ENV_FILE"
 expect_eq 'stack.env is used only when the variable is absent' \
   "$CONFIGURED_IMAGE_VALUE" "$REPO:v26-beta@sha256:deadbeef"
 expect_eq 'absent variable reports stack.env as source' "$CONFIGURED_IMAGE_SOURCE" 'stack.env'

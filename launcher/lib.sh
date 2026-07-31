@@ -175,11 +175,11 @@ is_secret_env_key() {
 
 # Resolve one configured image variable.
 #
-# The container environment is authoritative: the launcher image always defines
-# both DISCVAULT_NEXT_IMAGE and DISCVAULT_IMAGE via ENV, and Unraid passes them
-# on every start. An empty value therefore means "no override", not "look it up
-# somewhere else" -- otherwise a value written to /config/stack.env once could
-# never be cleared from the UI again, permanently pinning the stack.
+# The container environment is authoritative: the launcher image defines
+# DISCVAULT_IMAGE via ENV and Unraid passes it on every start. An empty value
+# therefore means "no value", not "look it up somewhere else" -- otherwise a
+# value written to /config/stack.env once could never be cleared from the UI
+# again, permanently pinning the stack.
 #
 # Sets two globals for the caller: CONFIGURED_IMAGE_SOURCE (container-env or
 # stack.env) and CONFIGURED_IMAGE_VALUE (possibly empty).

@@ -63,7 +63,6 @@ run_entrypoint() {
     DISCVAULT_LAUNCHER_NGINX_CONF="$cfg/nginx.conf" \
     DISCVAULT_LAUNCHER_STACK_IMAGE=ghcr.io/helmerznl/discvault:beta \
     DISCVAULT_IMAGE=auto \
-    DISCVAULT_NEXT_IMAGE= \
     DISCVAULT_POSTGRES_PROBE_ATTEMPTS=2 \
     DISCVAULT_POSTGRES_PROBE_INTERVAL=0 \
     "$@" \
@@ -137,6 +136,57 @@ expect_log 'verifies the database credentials' 'PostgreSQL accepted the configur
 expect_stub 'brings postgres up on its own first' 'compose .* up .* postgres$'
 expect_stub 'then brings the full stack up' 'compose .* up .*next-api next-worker next-mcp'
 expect_stub 'probes with an authenticated psql' 'exec .*psql'
+
+echo '# channel selection'
+
+# One control with four positions replaced three overlapping image fields.
+run_entrypoint chan-auto STUB_PSQL=ok DISCVAULT_CHANNEL=auto
+expect_log 'auto follows the launcher packaged channel' \
+  'channel=auto source=DISCVAULT_CHANNEL=auto .*resolved_ref=ghcr.io/helmerznl/discvault:beta'
+expect_log 'auto reports the update channel it implies' 'update channel beta'
+
+run_entrypoint chan-latest STUB_PSQL=ok DISCVAULT_CHANNEL=latest
+expect_log 'latest deploys discvault:latest' \
+  'channel=latest .*resolved_ref=ghcr.io/helmerznl/discvault:latest'
+expect_log 'latest reports the stable update channel' 'update channel stable'
+
+run_entrypoint chan-beta STUB_PSQL=ok DISCVAULT_CHANNEL=beta
+expect_log 'beta deploys discvault:beta' \
+  'channel=beta .*resolved_ref=ghcr.io/helmerznl/discvault:beta'
+
+run_entrypoint chan-unset STUB_PSQL=ok
+expect_log 'an unset channel behaves as auto' 'channel=auto'
+
+run_entrypoint chan-bogus STUB_PSQL=ok DISCVAULT_CHANNEL=nonsense
+expect_log 'an unknown channel warns' 'Unknown DISCVAULT_CHANNEL=nonsense'
+expect_log 'an unknown channel continues as auto' 'channel=auto'
+expect_status 'an unknown channel does not abort the boot' 0
+
+echo '# manual channel'
+
+run_entrypoint manual-ok STUB_PSQL=ok DISCVAULT_CHANNEL=manual DISCVAULT_IMAGE=v26.7.3
+expect_log 'manual uses DISCVAULT_IMAGE' \
+  'channel=manual source=DISCVAULT_CHANNEL=manual .*resolved_ref=ghcr.io/helmerznl/discvault:v26.7.3'
+
+# A typo in a free-text field should not take the whole app offline, so an
+# image the registry does not have falls back to latest -- loudly.
+run_entrypoint manual-bad STUB_PSQL=ok DISCVAULT_CHANNEL=manual \
+  DISCVAULT_IMAGE=registry.example.com/nope/missing:tag
+expect_status 'still boots' 0
+expect_log 'says the reference does not exist' 'does not exist in the registry'
+expect_log 'says what it deployed instead' 'deploying ghcr.io/helmerznl/discvault:latest instead'
+expect_log 'records the fallback as the selection source' 'source=manual-unresolvable-fallback-latest'
+
+run_entrypoint manual-empty STUB_PSQL=ok DISCVAULT_CHANNEL=manual DISCVAULT_IMAGE=
+expect_status 'an empty manual image still boots' 0
+expect_log 'says the field is empty' 'DISCVAULT_IMAGE is empty'
+expect_log 'falls back to latest' 'source=manual-empty-fallback-latest'
+
+echo '# retired variable'
+
+run_entrypoint retired STUB_PSQL=ok DISCVAULT_NEXT_IMAGE=ghcr.io/helmerznl/discvault:dev
+expect_log 'warns that DISCVAULT_NEXT_IMAGE is ignored' 'DISCVAULT_NEXT_IMAGE.*no longer used'
+expect_log 'and does not act on it' 'resolved_ref=ghcr.io/helmerznl/discvault:beta'
 
 echo '# credentials rejected by an existing data directory'
 

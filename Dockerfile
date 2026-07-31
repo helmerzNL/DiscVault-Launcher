@@ -16,8 +16,7 @@ RUN chmod +x /usr/local/bin/discvault-launcher
 ENV DISCVAULT_LAUNCHER_CONFIG=/config \
     DISCVAULT_PROJECT_NAME=discvault_stack \
     DISCVAULT_NETWORK=discvault-stack \
-    DISCVAULT_CHANNEL= \
-    DISCVAULT_NEXT_IMAGE= \
+    DISCVAULT_CHANNEL=auto \
     DISCVAULT_IMAGE=auto \
     DISCVAULT_DATA_DIR_HOST=/mnt/user/appdata/discvault \
     DISCVAULT_POSTGRES_DATA_DIR_HOST=/mnt/user/appdata/discvault-postgres \

@@ -83,10 +83,10 @@ docker run -d \
 The first start writes generated secrets to `/config/stack.env`. Keep that file
 stable; it contains the PostgreSQL password and JWT secret used by the stack.
 
-`stack.env` is **not** authoritative for image selection. `DISCVAULT_NEXT_IMAGE`
-and `DISCVAULT_IMAGE` are always read from the container environment, so
-clearing the field in Unraid really clears the override. Any stale value left in
-`stack.env` is ignored and logged.
+`stack.env` is **not** authoritative for image selection. `DISCVAULT_CHANNEL` and
+`DISCVAULT_IMAGE` are always read from the container environment, so clearing a
+field in Unraid really clears it. Any stale value left in `stack.env` is ignored
+and logged.
 
 ## Unraid Community Apps
 
@@ -158,27 +158,35 @@ does not poll while running, so a new DiscVault build reaches you when the
 launcher container restarts — either through the Unraid update above, or by
 restarting the container by hand.
 
-The launcher resolves image rollouts in this order:
+### Choosing which DiscVault image runs
 
-1. `DISCVAULT_NEXT_IMAGE` (primary override for v26 stack deployments).
-2. `DISCVAULT_IMAGE` (fallback, including `auto` behavior).
-3. `DISCVAULT_CHANNEL` (`latest` or `beta`, the Unraid dropdown).
-4. Launcher-packaged default image for the current channel.
+One control decides this: `DISCVAULT_CHANNEL`, the **DiscVault Channel**
+dropdown in Unraid.
 
-`DISCVAULT_CHANNEL` sits below the image overrides so a digest pin still wins,
-and above the packaged default so switching channel in Unraid works without also
-editing the Repository field. An unrecognised value logs a warning and falls
-back to the packaged channel rather than failing the boot.
+| Value | Deploys |
+| --- | --- |
+| `auto` (default) | the channel baked into this launcher image, matching the Repository |
+| `latest` | `ghcr.io/helmerznl/discvault:latest` |
+| `beta` | `ghcr.io/helmerznl/discvault:beta` |
+| `manual` | whatever `DISCVAULT_IMAGE` says |
 
-Both variables are read from the container environment only. An empty value
-means "no override"; a value stored in `/config/stack.env` is never used unless
-the variable is absent from the environment entirely.
+`DISCVAULT_IMAGE` is read **only** when the channel is `manual`; with any other
+channel it is ignored and the launcher logs that it is being ignored. If a
+manual reference cannot be resolved in the registry — a typo, a tag that was
+never published — the launcher deploys `:latest` instead and says so, rather
+than taking the whole app offline over a free-text field.
 
-If no override is set, the safe default is `ghcr.io/helmerznl/discvault:latest`.
-Manual GitHub Actions launcher publishes should therefore default to baking in
-`discvault:latest` unless a different DiscVault image is intentionally selected.
+An unrecognised channel value warns and continues as `auto`.
 
-Shorthand resolution:
+`DISCVAULT_NEXT_IMAGE` used to be a third way to say the same thing and is no
+longer used. A value still set on the container is warned about on every boot;
+move it to `DISCVAULT_CHANNEL=manual` plus `DISCVAULT_IMAGE`.
+
+`DISCVAULT_IMAGE` is read from the container environment only. An empty value
+means "no value"; a value stored in `/config/stack.env` is never used unless the
+variable is absent from the environment entirely.
+
+Shorthand resolution for `DISCVAULT_IMAGE`:
 
 - Anything containing a `/` is used as-is (a full image reference, with an
   optional `:tag` and/or `@sha256:` digest).
@@ -210,17 +218,17 @@ launcher start after pulling.
 
 ### Explicit pinning
 
-To force a deterministic build, set the `DISCVAULT_NEXT_IMAGE` container
-variable (the Unraid field, or `-e` on `docker run`) to a digest-pinned
-reference:
+To force a deterministic build, set the channel to `manual` and give
+`DISCVAULT_IMAGE` a digest-pinned reference:
 
 ```env
-DISCVAULT_NEXT_IMAGE=ghcr.io/helmerznl/discvault:v26-beta@sha256:<digest>
+DISCVAULT_CHANNEL=manual
+DISCVAULT_IMAGE=ghcr.io/helmerznl/discvault:beta@sha256:<digest>
 ```
 
 Then restart the launcher container. A pinned digest disables automatic updates
 by design; the launcher logs a warning on every boot while a pin is active.
-Clear the variable to resume normal channel updates.
+Set the channel back to `auto`, `latest` or `beta` to resume normal updates.
 
 Do not pin by editing `/config/stack.env` — that file is no longer read for
 image selection, precisely so a forgotten pin cannot freeze the stack.
@@ -277,10 +285,9 @@ snapshots are logged too, but secret values (passwords/secrets/tokens/keys) are
 always redacted. Default retention is the latest 50 boot sessions
 (`DISCVAULT_BOOT_LOG_RETENTION=50`).
 
-With `DISCVAULT_NEXT_IMAGE=auto` and `DISCVAULT_IMAGE=auto`, the launcher starts
-the DiscVault app image baked into its own channel. Set `DISCVAULT_NEXT_IMAGE`
-to a tag or full image reference only when you want to override that channel
-intentionally.
+With `DISCVAULT_CHANNEL=auto`, the launcher starts the DiscVault app image baked
+into its own channel. Pick `latest` or `beta` to override that, or `manual` plus
+`DISCVAULT_IMAGE` for a specific reference.
 
 `ghcr.io/helmerznl/discvault:latest` is the production v26 stack image, not the
 old single-container app. Every channel starts PostgreSQL, `next-api`,

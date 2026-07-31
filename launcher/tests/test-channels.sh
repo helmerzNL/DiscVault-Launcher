@@ -220,7 +220,10 @@ PY
 # A pipe-separated Default renders a dropdown in the Unraid UI; the element text
 # stays the actual value, so a client that ignored the syntax would still get a
 # working field. Keeping these in sync with channels.json is the point.
-expect_eq 'channel dropdown offers exactly the built channels' \
+# The dropdown offers the built channels plus two launcher-side modes: auto
+# (follow the packaged channel) and manual (use DISCVAULT_IMAGE). Every other
+# option has to correspond to something the workflows actually build.
+expect_eq 'channel dropdown offers the built channels plus auto and manual' \
   "$(python3 - "$TEMPLATE" "$CHANNELS" <<'PY'
 import json, sys, xml.dom.minidom
 doc = xml.dom.minidom.parse(sys.argv[1])
@@ -231,7 +234,38 @@ if not node:
     raise SystemExit
 offered = set(node[0].getAttribute("Default").split("|"))
 built = {c["channel"] for c in json.load(open(sys.argv[2]))}
-print("yes" if offered == built else f"no (offers {sorted(offered)}, builds {sorted(built)})")
+expected = built | {"auto", "manual"}
+print("yes" if offered == expected else f"no (offers {sorted(offered)}, expected {sorted(expected)})")
+PY
+)" 'yes'
+
+expect_eq 'the channel dropdown defaults to auto' \
+  "$(python3 - "$TEMPLATE" <<'PY'
+import sys, xml.dom.minidom
+doc = xml.dom.minidom.parse(sys.argv[1])
+node = [c for c in doc.getElementsByTagName("Config")
+        if c.getAttribute("Target") == "DISCVAULT_CHANNEL"][0]
+print((node.firstChild.data if node.firstChild else "").strip())
+PY
+)" 'auto'
+
+# Three overlapping image fields is what prompted collapsing them into one.
+expect_eq 'the retired image override is gone from the template' \
+  "$(python3 - "$TEMPLATE" <<'PY'
+import sys, xml.dom.minidom
+doc = xml.dom.minidom.parse(sys.argv[1])
+targets = {c.getAttribute("Target") for c in doc.getElementsByTagName("Config")}
+print("no" if "DISCVAULT_NEXT_IMAGE" in targets else "yes")
+PY
+)" 'yes'
+
+expect_eq 'channel and image sit next to each other' \
+  "$(python3 - "$TEMPLATE" <<'PY'
+import sys, xml.dom.minidom
+doc = xml.dom.minidom.parse(sys.argv[1])
+targets = [c.getAttribute("Target") for c in doc.getElementsByTagName("Config")]
+i, j = targets.index("DISCVAULT_CHANNEL"), targets.index("DISCVAULT_IMAGE")
+print("yes" if j == i + 1 else f"no (channel at {i}, image at {j})")
 PY
 )" 'yes'
 

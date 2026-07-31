@@ -42,6 +42,13 @@ image_id() {
   docker image inspect "$1" --format '{{.Id}}' 2>/dev/null || true
 }
 
+# True when the reference names something the registry can actually serve.
+# A digest-pinned ref carries its own answer and needs no lookup.
+stack_image_is_resolvable() {
+  is_digest_pinned_ref "$1" && return 0
+  [ -n "$(remote_digest_for_ref "$1" || true)" ]
+}
+
 remote_digest_for_ref() {
   inspect_output="$(docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}' 2>/dev/null || true)"
   digest="$(printf '%s\n' "$inspect_output" | grep -Eo 'sha256:[0-9a-f]{64}' | head -n 1 || true)"
@@ -421,49 +428,70 @@ log_ignored_stored_override() {
   fi
 }
 
-# The container environment wins over anything persisted in stack.env. Both
-# variables are always defined by the launcher image, so an empty value means
-# "no override" rather than "fall back to the stored value". Without this, an
-# override written to stack.env once -- for example the digest pin the README
-# used to recommend -- could never be cleared from the Unraid UI again, and the
-# stack stayed frozen on that image forever.
-resolve_configured_image_var DISCVAULT_NEXT_IMAGE "$ENV_FILE"
-NEXT_IMAGE_SOURCE="$CONFIGURED_IMAGE_SOURCE"
-configured_next_image_raw="$CONFIGURED_IMAGE_VALUE"
-log_ignored_stored_override DISCVAULT_NEXT_IMAGE "$NEXT_IMAGE_SOURCE" "$configured_next_image_raw"
-
+# DISCVAULT_IMAGE is read from the container environment, never from stack.env
+# unless the variable is absent entirely. The launcher image always defines it,
+# so an empty field means "no value" rather than "reuse the stored one" --
+# otherwise a value written once could never be cleared from the Unraid UI, and
+# the stack stayed frozen on it.
 resolve_configured_image_var DISCVAULT_IMAGE "$ENV_FILE"
 IMAGE_SOURCE="$CONFIGURED_IMAGE_SOURCE"
 configured_image_raw="$CONFIGURED_IMAGE_VALUE"
 log_ignored_stored_override DISCVAULT_IMAGE "$IMAGE_SOURCE" "$configured_image_raw"
 
-configured_next_image="$(resolve_stack_image_alias "$configured_next_image_raw")"
-configured_image="$(resolve_stack_image_alias "$configured_image_raw")"
-
-# The Unraid channel dropdown. It sits below the explicit image overrides so a
-# digest pin still wins, and above the packaged default so switching the
-# dropdown works without also changing the launcher repository.
-CONFIGURED_CHANNEL="${DISCVAULT_CHANNEL:-}"
-CHANNEL_STACK_IMAGE=""
-if [ -n "$CONFIGURED_CHANNEL" ] && [ "$CONFIGURED_CHANNEL" != "auto" ]; then
-  CHANNEL_STACK_IMAGE="$(stack_image_for_channel "$CONFIGURED_CHANNEL")"
-  if [ -z "$CHANNEL_STACK_IMAGE" ]; then
-    log "WARNING: Unknown DISCVAULT_CHANNEL=$CONFIGURED_CHANNEL; expected latest or beta. Falling back to the launcher's packaged channel."
-  fi
+# DISCVAULT_NEXT_IMAGE was a third way to say the same thing. Ignoring it
+# silently would move a pinned install onto a channel default without warning.
+if [ -n "${DISCVAULT_NEXT_IMAGE:-}" ]; then
+  log "WARNING: DISCVAULT_NEXT_IMAGE=${DISCVAULT_NEXT_IMAGE} is no longer used and is being ignored. Set DISCVAULT_CHANNEL=manual and put the reference in DISCVAULT_IMAGE instead."
 fi
 
-if [ -n "$configured_next_image_raw" ] && [ "$configured_next_image_raw" != "auto" ]; then
-  STACK_IMAGE="$configured_next_image"
-  STACK_IMAGE_SOURCE="DISCVAULT_NEXT_IMAGE"
-elif [ -n "$configured_image_raw" ] && [ "$configured_image_raw" != "auto" ]; then
-  STACK_IMAGE="$configured_image"
-  STACK_IMAGE_SOURCE="DISCVAULT_IMAGE"
-elif [ -n "$CHANNEL_STACK_IMAGE" ]; then
-  STACK_IMAGE="$CHANNEL_STACK_IMAGE"
-  STACK_IMAGE_SOURCE="DISCVAULT_CHANNEL=$CONFIGURED_CHANNEL"
-else
-  STACK_IMAGE="${PACKAGED_STACK_IMAGE:-ghcr.io/helmerznl/discvault:latest}"
-  STACK_IMAGE_SOURCE="packaged-default"
+DEFAULT_STACK_IMAGE="$DISCVAULT_IMAGE_REPO:latest"
+
+# One control, four positions:
+#   auto    follow the channel baked into this launcher image
+#   latest  production
+#   beta    beta
+#   manual  whatever DISCVAULT_IMAGE says
+CONFIGURED_CHANNEL="${DISCVAULT_CHANNEL:-auto}"
+case "$CONFIGURED_CHANNEL" in
+  auto|latest|beta|manual) ;;
+  '')
+    CONFIGURED_CHANNEL=auto
+    ;;
+  *)
+    log "WARNING: Unknown DISCVAULT_CHANNEL=$CONFIGURED_CHANNEL; expected auto, latest, beta or manual. Continuing as auto."
+    CONFIGURED_CHANNEL=auto
+    ;;
+esac
+
+case "$CONFIGURED_CHANNEL" in
+  manual)
+    manual_ref="$(resolve_stack_image_alias "$configured_image_raw")"
+    if [ -z "$manual_ref" ]; then
+      log "WARNING: DISCVAULT_CHANNEL=manual but DISCVAULT_IMAGE is empty; deploying $DEFAULT_STACK_IMAGE instead."
+      STACK_IMAGE="$DEFAULT_STACK_IMAGE"
+      STACK_IMAGE_SOURCE="manual-empty-fallback-latest"
+    elif stack_image_is_resolvable "$manual_ref"; then
+      STACK_IMAGE="$manual_ref"
+      STACK_IMAGE_SOURCE="DISCVAULT_CHANNEL=manual"
+    else
+      # A typo in a free-text field should not take the whole app offline.
+      log "WARNING: DISCVAULT_IMAGE=$configured_image_raw resolves to $manual_ref, which does not exist in the registry; deploying $DEFAULT_STACK_IMAGE instead."
+      STACK_IMAGE="$DEFAULT_STACK_IMAGE"
+      STACK_IMAGE_SOURCE="manual-unresolvable-fallback-latest"
+    fi
+    ;;
+  latest|beta)
+    STACK_IMAGE="$(stack_image_for_channel "$CONFIGURED_CHANNEL")"
+    STACK_IMAGE_SOURCE="DISCVAULT_CHANNEL=$CONFIGURED_CHANNEL"
+    ;;
+  *)
+    STACK_IMAGE="${PACKAGED_STACK_IMAGE:-$DEFAULT_STACK_IMAGE}"
+    STACK_IMAGE_SOURCE="DISCVAULT_CHANNEL=auto (launcher packaged channel)"
+    ;;
+esac
+
+if [ "$CONFIGURED_CHANNEL" != "manual" ] && [ -n "$configured_image_raw" ] && [ "$configured_image_raw" != "auto" ]; then
+  log "Ignoring DISCVAULT_IMAGE=$configured_image_raw; it only applies when DISCVAULT_CHANNEL=manual (currently $CONFIGURED_CHANNEL)."
 fi
 
 if [ -z "$STACK_IMAGE" ]; then
@@ -471,9 +499,6 @@ if [ -z "$STACK_IMAGE" ]; then
 fi
 
 export DISCVAULT_IMAGE="$STACK_IMAGE"
-if [ -n "$configured_next_image_raw" ]; then
-  export DISCVAULT_NEXT_IMAGE="$configured_next_image"
-fi
 
 # Legacy single-container mode was removed: DiscVault dropped app/Dockerfile and
 # now builds every channel -- including :latest -- from app/Dockerfile.v26, so
@@ -493,7 +518,6 @@ esac
 set_env TZ "${TZ:-Europe/Amsterdam}" "$ENV_FILE"
 set_env DISCVAULT_CHANNEL "$CONFIGURED_CHANNEL" "$ENV_FILE"
 set_env DISCVAULT_IMAGE "${configured_image_raw:-auto}" "$ENV_FILE"
-set_env DISCVAULT_NEXT_IMAGE "$configured_next_image_raw" "$ENV_FILE"
 set_env DISCVAULT_DATA_DIR_HOST "${DISCVAULT_DATA_DIR_HOST:-/mnt/user/appdata/discvault}" "$ENV_FILE"
 set_env DISCVAULT_POSTGRES_DATA_DIR_HOST "${DISCVAULT_POSTGRES_DATA_DIR_HOST:-/mnt/user/appdata/discvault-postgres}" "$ENV_FILE"
 set_env DISCVAULT_NETWORK "$NETWORK_NAME" "$ENV_FILE"
@@ -549,7 +573,6 @@ log "Verified launcher secrets are present in $ENV_FILE"
 for key in \
   TZ \
   DISCVAULT_IMAGE \
-  DISCVAULT_NEXT_IMAGE \
   DISCVAULT_DATA_DIR_HOST \
   DISCVAULT_POSTGRES_DATA_DIR_HOST \
   DISCVAULT_NETWORK \
@@ -578,7 +601,6 @@ done
 log "Exported launcher env file values for Docker Compose"
 log_env_snapshot \
   DISCVAULT_CHANNEL \
-  DISCVAULT_NEXT_IMAGE \
   DISCVAULT_IMAGE \
   DISCVAULT_DEPLOYMENT_MODE \
   DISCVAULT_FORCE_RECREATE_ON_PULL \
@@ -608,15 +630,9 @@ log_env_snapshot \
 # Compose interpolation prefers the process environment over --env-file.
 # Re-apply the resolved image ref here so service images never fall back to "auto".
 export DISCVAULT_IMAGE="$STACK_IMAGE"
-if [ -n "$configured_next_image_raw" ]; then
-  export DISCVAULT_NEXT_IMAGE="$configured_next_image"
-fi
 
 cp "$ENV_FILE" "$COMPOSE_ENV_FILE"
 set_env DISCVAULT_IMAGE "$STACK_IMAGE" "$COMPOSE_ENV_FILE"
-if [ -n "$configured_next_image_raw" ]; then
-  set_env DISCVAULT_NEXT_IMAGE "$configured_next_image" "$COMPOSE_ENV_FILE"
-fi
 log "Prepared compose env file $COMPOSE_ENV_FILE with resolved DISCVAULT_IMAGE=$STACK_IMAGE"
 
 COMPOSE_UP_SERVICES="postgres next-api next-worker next-mcp"
@@ -690,7 +706,7 @@ fi
 STACK_IMAGE_REPO="$(image_repo_from_ref "$STACK_IMAGE")"
 
 LAST_STACK_DIGEST="$(cat "$LAST_STACK_DIGEST_FILE" 2>/dev/null || true)"
-log "DiscVault image selection source=$STACK_IMAGE_SOURCE configured_next_image=${configured_next_image_raw:-<empty>} (from $NEXT_IMAGE_SOURCE) configured_image=${configured_image_raw:-<empty>} (from $IMAGE_SOURCE) resolved_ref=$STACK_IMAGE repo=$STACK_IMAGE_REPO"
+log "DiscVault image selection channel=$CONFIGURED_CHANNEL source=$STACK_IMAGE_SOURCE configured_image=${configured_image_raw:-<empty>} (from $IMAGE_SOURCE) resolved_ref=$STACK_IMAGE repo=$STACK_IMAGE_REPO"
 log "DiscVault desired digest source=$DESIRED_DIGEST_SOURCE desired_digest=$DESIRED_DIGEST"
 log "DiscVault metadata digests packaged=${PACKAGED_STACK_DIGEST:-none} last_applied=${LAST_STACK_DIGEST:-none}"
 
