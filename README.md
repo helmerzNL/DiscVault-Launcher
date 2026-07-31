@@ -225,6 +225,21 @@ Clear the variable to resume normal channel updates.
 Do not pin by editing `/config/stack.env` — that file is no longer read for
 image selection, precisely so a forgotten pin cannot freeze the stack.
 
+### First start takes a while
+
+`postgres` and `next-api` both have a 120s healthcheck `start_period`. The first
+start runs `initdb` on the bind-mounted data directory and then applies every
+migration, which is slow on NAS storage. Without that grace period, early
+healthcheck failures mark the container unhealthy and Compose aborts the whole
+`up` with `dependency failed to start`.
+
+If postgres does fail, read the container log rather than the launcher log —
+the launcher only sees "unhealthy":
+
+```bash
+docker logs <project>_stack-postgres-1 --tail 40
+```
+
 ### Launcher boot-session logs
 
 Each launcher startup writes a timestamped boot-session logfile to:

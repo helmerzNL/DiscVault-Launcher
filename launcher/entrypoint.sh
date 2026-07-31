@@ -169,6 +169,27 @@ require_non_empty_env() {
   fi
 }
 
+# Compose interpolation prefers the process environment over --env-file, so a
+# value can be correct in the env file and still reach the container empty. That
+# is not hypothetical: launchers built before the env values were exported
+# generated a POSTGRES_PASSWORD into stack.env, compose read the empty one from
+# the container environment, and postgres crash-looped on "superuser password is
+# not specified" -- surfacing only as "container is unhealthy". Check both.
+require_secret_reaches_compose() {
+  key="$1"
+  file_value="$(env_file_value "$key" "$COMPOSE_ENV_FILE")"
+  if [ -z "$file_value" ]; then
+    fail "$key is empty in $COMPOSE_ENV_FILE; refusing to start the stack with an unusable secret"
+  fi
+  env_value="$(printenv "$key" 2>/dev/null || true)"
+  if [ -z "$env_value" ]; then
+    fail "$key is set in $COMPOSE_ENV_FILE but empty in the launcher process environment; Compose would interpolate the empty value"
+  fi
+  if [ "$env_value" != "$file_value" ]; then
+    fail "$key differs between $COMPOSE_ENV_FILE and the launcher process environment; Compose would use the process value"
+  fi
+}
+
 export_env_from_file() {
   key="$1"
   file="$2"
@@ -640,6 +661,10 @@ if [ -n "$FORCE_RECREATE_REASON" ]; then
   log "$FORCE_RECREATE_REASON; forcing stack recreate"
   UP_ARGS="-d --remove-orphans --force-recreate"
 fi
+
+require_secret_reaches_compose POSTGRES_PASSWORD
+require_secret_reaches_compose JWT_SECRET
+log "Verified stack secrets reach Compose from both $COMPOSE_ENV_FILE and the process environment"
 
 log "Starting or updating DiscVault stack project $PROJECT_NAME"
 log "DiscVault compose services: $COMPOSE_UP_SERVICES"

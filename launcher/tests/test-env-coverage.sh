@@ -135,5 +135,94 @@ else
   done
 fi
 
+# Variable names alone were not enough. A launcher install once failed with
+# "postgres is unhealthy" because the healthcheck probed the Unix socket during
+# initdb and had no start_period -- both already fixed upstream, both invisible
+# to a name-only comparison. Compare the service definitions themselves.
+UPSTREAM_COMPOSE="$DISCVAULT_REPO/app/deploy/next/docker-compose.yml"
+
+if [ ! -f "$UPSTREAM_COMPOSE" ]; then
+  printf 'skip reference compose not found at %s\n' "$UPSTREAM_COMPOSE"
+else
+  echo '# service definitions vs the reference compose'
+
+  report="$(python3 - "$LAUNCHER_COMPOSE" "$STANDALONE_COMPOSE" "$UPSTREAM_COMPOSE" <<'PY'
+import re, sys, yaml
+
+launcher_path, standalone_path, reference_path = sys.argv[1:4]
+
+
+def load(path):
+    # The launcher compose carries a placeholder the entrypoint substitutes.
+    return yaml.safe_load(open(path).read().replace("__DISCVAULT_MCP_PORTS__", ""))
+
+
+def guarded_vars(text):
+    """Variables the file requires to be set, via ${VAR:?message}."""
+    return {m.group(1) for m in re.finditer(r"\$\{([A-Z_][A-Z0-9_]*):\?", text)}
+
+
+reference = load(reference_path)
+reference_text = open(reference_path).read()
+reference_guarded = guarded_vars(reference_text)
+
+# Settings the launcher deliberately differs on, each with a reason.
+EXEMPT = {
+    # next-mcp publishes its port only when the user asks for it, so the
+    # launcher injects ports separately and the reference always publishes.
+    ("next-mcp", "ports"),
+}
+
+HEALTH_KEYS = ("test", "interval", "timeout", "retries", "start_period", "disable")
+
+problems = []
+for path in (launcher_path, standalone_path):
+    name = path.rsplit("/", 1)[-1]
+    doc = load(path)
+    text = open(path).read()
+    guarded = guarded_vars(text)
+
+    for svc, ref_svc in reference["services"].items():
+        our_svc = doc["services"].get(svc)
+        if our_svc is None:
+            # A missing service is reported by the caller's own checks; the
+            # standalone compose legitimately has no next-mcp today.
+            continue
+        if (svc, "healthcheck") in EXEMPT:
+            continue
+
+        ref_health = ref_svc.get("healthcheck") or {}
+        our_health = our_svc.get("healthcheck") or {}
+        for key in HEALTH_KEYS:
+            if ref_health.get(key) != our_health.get(key):
+                problems.append(
+                    f"{name} {svc}.healthcheck.{key}: {our_health.get(key)!r} "
+                    f"!= reference {ref_health.get(key)!r}"
+                )
+
+    # Anything the reference refuses to start without, the launcher must refuse
+    # too -- otherwise an empty value reaches the container and fails obscurely.
+    for var in sorted(reference_guarded - guarded):
+        if f"${{{var}" in text:
+            problems.append(f"{name} uses ${{{var}}} but the reference guards it with ${{{var}:?...}}")
+
+print("\n".join(problems) or "none")
+PY
+)"
+
+  if [ "$report" = "none" ]; then
+    CHECKS=$((CHECKS + 1))
+    ok_check 'service definitions match the reference compose'
+  else
+    printf '%s\n' "$report" | while IFS= read -r line; do
+      printf 'FAIL %s\n' "$line"
+    done
+    # The subshell above cannot mutate FAILURES, so count the report separately.
+    problem_count="$(printf '%s\n' "$report" | grep -c .)"
+    CHECKS=$((CHECKS + problem_count))
+    FAILURES=$((FAILURES + problem_count))
+  fi
+fi
+
 printf '\n%s checks, %s failures\n' "$CHECKS" "$FAILURES"
 [ "$FAILURES" -eq 0 ]
